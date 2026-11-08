@@ -1,18 +1,19 @@
 diff --git a/runtime/app/app.h b/runtime/app/app.h
-index 229e2fa..057eb8e 100644
+index 229e2fa..1742cc5 100644
 --- a/runtime/app/app.h
 +++ b/runtime/app/app.h
-@@ -26,7 +26,9 @@ struct Settings {
+@@ -26,7 +26,10 @@ struct Settings {
      bool custom_textures = true;     // images in textures\replacement\ beside the exe replace the game's
      bool dump_textures = false;      // each texture once into textures\dumps\ beside the exe
      uint32_t texture_dump_format = 0;  // 0 PNG, 1 DDS
++    bool ui_upscale = true;            // sharper fonts, menus and HUD: screen space textures upscaled (gpu/ui_upscale.h)
 +    std::string texture_packs;         // built-in packs in textures\packs\ beside the exe, comma separated
      std::string join_ip;                   // co-op: a host past the LAN the system link search also asks
 +    std::string game_path;                 // the game's disc image (.iso) or its folder, UTF-8; empty: assets
  };
  
  Settings& Get();
-@@ -45,8 +47,8 @@ float RenderScale(uint32_t guest_height);
+@@ -45,8 +48,8 @@ float RenderScale(uint32_t guest_height);
  bool Widescreen();
  
  std::filesystem::path ExeDir();
@@ -149,26 +150,28 @@ index e36f7ac..9a07980 100644
  }
  
 diff --git a/runtime/app/settings.cpp b/runtime/app/settings.cpp
-index 075b3b7..5abca1c 100644
+index 075b3b7..b231bb2 100644
 --- a/runtime/app/settings.cpp
 +++ b/runtime/app/settings.cpp
-@@ -54,6 +54,8 @@ void Load() {
+@@ -54,6 +54,9 @@ void Load() {
      s.dump_textures = t["dump_textures"].value_or(s.dump_textures);
      s.texture_dump_format = std::min(t["texture_dump_format"].value_or(s.texture_dump_format), 1u);
      s.join_ip = t["join_ip"].value_or(s.join_ip);
 +    s.texture_packs = t["texture_packs"].value_or(s.texture_packs);
++    s.ui_upscale = t["ui_upscale"].value_or(s.ui_upscale);
 +    s.game_path = t["game_path"].value_or(s.game_path);
      for (const Option& o : kGame.options) {
          if (o.flag) *o.flag = t[o.key].value_or(*o.flag);
          else *o.value = t[o.key].value_or(*o.value);
-@@ -75,7 +77,9 @@ toml::table Table() {
+@@ -75,7 +78,10 @@ toml::table Table() {
                    {"custom_textures", s.custom_textures},
                    {"dump_textures", s.dump_textures},
                    {"texture_dump_format", int64_t(s.texture_dump_format)},
 -                  {"join_ip", s.join_ip}};
 +                  {"join_ip", s.join_ip},
 +                  {"game_path", s.game_path},
-+                  {"texture_packs", s.texture_packs}};
++                  {"texture_packs", s.texture_packs},
++                  {"ui_upscale", s.ui_upscale}};
      for (const Option& o : kGame.options) {
          if (o.flag) t.insert(o.key, *o.flag);
          else t.insert(o.key, int64_t(*o.value));
@@ -281,10 +284,46 @@ index 7e6507d..b72ef2d 100644
      va_list ap;
      va_start(ap, fmt);
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index 3f9d4e7..533efaa 100644
+index 3f9d4e7..bdd5ef6 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
-@@ -2527,9 +2527,63 @@ void D3D12Backend::CaptureDraw(const State& s, uint32_t prim, uint32_t count, co
+@@ -345,6 +345,7 @@ struct Tex {
+     const Tex* swap = nullptr;  // the texture pack's image drawn in its place
+     uint64_t pack_key = 0;      // its pack image is still loading
+     uint32_t pack_gen = 0;      // texturedumper::Generation the key was taken at, 0 after new bytes
++    bool screen = false;        // drawn in screen space (2D: fonts, menus, HUD), for ui_upscale
+ };
+ 
+ struct PsoKey {
+@@ -736,6 +737,7 @@ private:
+     uint32_t recent_used_next_ = 0;
+     DrawBinds binds_;
+     std::unordered_map<uint64_t, Tex> textures_;  // by data address, a P8 texture's with its palette's above
++    bool screen_draw_ = false;  // the draw binding its textures is in screen space (ui_upscale)
+     std::unordered_map<uint64_t, Tex> pack_textures_;  // texture pack images by key, kept for the run
+     std::unordered_map<uint64_t, ComPtr<ID3D12PipelineState>> blit_psos_;
+     Extension* ext_ = nullptr;
+@@ -1874,6 +1876,11 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
+             tx.pack_gen = 0;
+         }
+     }
++    // the first time a texture is drawn in screen space it is keyed again, for its sharper copy
++    if (screen_draw_ && !tx.screen && texturedumper::Upscaling()) {
++        tx.screen = true;
++        tx.pack_gen = 0;
++    }
+     if (tx.pack_gen != texturedumper::Generation()) LatchPackKey(tx, d, fi, colours);
+     if (tx.pack_key) LatchPackImage(tx);
+     const Tex& drawn = tx.swap ? *tx.swap : tx;
+@@ -1892,6 +1899,7 @@ void D3D12Backend::LatchPackKey(Tex& tx, const TextureDesc& d, const FormatInfo&
+     texturedumper::Dump(key, d, p, colours);
+     // dumping alone keys the bytes too: the pack image is not drawn then
+     tx.pack_key = texturedumper::Replacing() ? key : 0;
++    if (tx.screen && texturedumper::Upscale(key, d, p, colours)) tx.pack_key = key;
+ }
+ 
+ // the pack image for tx's bytes once it has loaded; textures with the same bytes share its GPU copy
+@@ -2527,9 +2535,63 @@ void D3D12Backend::CaptureDraw(const State& s, uint32_t prim, uint32_t count, co
      CaptureTextures(s, stages);
  }
  
@@ -349,7 +388,15 @@ index 3f9d4e7..533efaa 100644
      fputc('\n', cap_);
  }
  
-@@ -3324,12 +3378,12 @@ void LogPerf() {
+@@ -2834,6 +2896,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+ 
+     // stage textures, then the pixel shader made for them
+     DrawTextures stages;
++    screen_draw_ = a.pretransformed;
+     if (!BindStageTexturesAndTargets(s, stages)) return;
+     PixelKey pk = MakePixelKey(s, stages.info);
+     pk.quad = sh.quad;
+@@ -3324,12 +3387,12 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -364,7 +411,7 @@ index 3f9d4e7..533efaa 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3338,7 +3392,7 @@ void LogPerf() {
+@@ -3338,7 +3401,7 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -374,10 +421,18 @@ index 3f9d4e7..533efaa 100644
               "%.1f read-backs %.1f late | %llu shaders %llu psos this second",
               p.draws / n, p.raw / n, p.verts / n / 1000.0, p.upload / n / 1048576.0, p.overflow / n, p.sigs / n,
 diff --git a/runtime/gpu/texturedumper.cpp b/runtime/gpu/texturedumper.cpp
-index 612db6c..41dcc3b 100644
+index 612db6c..b086fbf 100644
 --- a/runtime/gpu/texturedumper.cpp
 +++ b/runtime/gpu/texturedumper.cpp
-@@ -53,16 +53,19 @@ using Clock = std::chrono::steady_clock;
+@@ -31,6 +31,7 @@
+ #include "app/app.h"
+ #include "core/log.h"
+ #include "gpu/shaders.h"
++#include "gpu/ui_upscale.h"
+ 
+ using Microsoft::WRL::ComPtr;
+ 
+@@ -53,16 +54,20 @@ using Clock = std::chrono::steady_clock;
  
  // the settings as Update latched them, the render thread's
  struct Latched {
@@ -386,6 +441,7 @@ index 612db6c..41dcc3b 100644
      bool dumping = false;
      uint32_t format = 0;
 +    bool custom = false;     // custom_textures: textures/replacement
++    bool upscale = false;    // ui_upscale: sharper copies of the textures drawn in screen space
 +    std::string packs;       // texture_packs: built-in packs under textures/packs, comma separated
      bool operator==(const Latched&) const = default;
  };
@@ -399,7 +455,15 @@ index 612db6c..41dcc3b 100644
      fs::path dump_dir;
      std::unordered_map<uint64_t, fs::path> files;  // by the key in their names; written by Update alone
      HANDLE watch = INVALID_HANDLE_VALUE;           // changes under pack_dir
-@@ -173,17 +176,24 @@ std::string Utf8(const fs::path& p) {
+@@ -74,6 +79,7 @@ struct Pack {
+     std::condition_variable wake;
+     std::deque<std::function<void()>> jobs;
+     std::unordered_set<uint64_t> asked;
++    std::unordered_set<uint64_t> generated;  // keys whose sharper 2D copy is made or being made (ui_upscale)
+     std::unordered_map<uint64_t, std::optional<Image>> loaded;  // empty: the file did not load
+     std::unordered_set<uint64_t> dumped;
+ };
+@@ -173,17 +179,24 @@ std::string Utf8(const fs::path& p) {
      return std::string(s.begin(), s.end());
  }
  
@@ -428,13 +492,13 @@ index 612db6c..41dcc3b 100644
  }
  
  // DDS files
-@@ -491,11 +501,22 @@ Image Decode(const TextureDesc& d, const uint8_t* guest, const uint32_t* palette
+@@ -491,11 +504,22 @@ Image Decode(const TextureDesc& d, const uint8_t* guest, const uint32_t* palette
  // the settings into g.set; false when none changed
  bool LatchSettings() {
      const app::Settings& s = app::Get();
 -    Latched now{s.custom_textures, s.dump_textures, s.texture_dump_format};
 +    Latched now{s.custom_textures || !s.texture_packs.empty(), s.dump_textures, s.texture_dump_format,
-+                s.custom_textures, s.texture_packs};
++                s.custom_textures, s.ui_upscale, s.texture_packs};
      if (now == g.set) return false;
      g.set = now;
      fs::path root = app::ExeDir() / "textures";
@@ -452,7 +516,7 @@ index 612db6c..41dcc3b 100644
      if (now.dumping) {
          g.dump_dir = root / "dumps";
          std::error_code ec;
-@@ -532,7 +553,7 @@ bool UpdatePackFiles() {
+@@ -532,10 +556,11 @@ bool UpdatePackFiles() {
      NoteFolderChange(now);
      if (!g.changed || now - *g.changed < kSettle) return false;
      g.changed.reset();
@@ -461,6 +525,314 @@ index 612db6c..41dcc3b 100644
      std::lock_guard l(g.lock);
      g.revision++;
      g.asked.clear();
++    g.generated.clear();
+     g.loaded.clear();
+     return true;
+ }
+@@ -553,8 +578,34 @@ uint32_t Generation() { return g.generation; }
+ 
+ bool Replacing() { return g.set.replacing && !g.files.empty(); }
+ 
++bool Upscaling() { return g.set.upscale; }
++
++bool Upscale(uint64_t key, const TextureDesc& d, const uint8_t* guest, const uint32_t* palette) {
++    if (!g.set.upscale || !key) return false;
++    if (g.set.replacing && g.files.count(key)) return false;  // a pack image wins
++    uint32_t revision = 0;
++    {
++        std::lock_guard l(g.lock);
++        if (!g.generated.insert(key).second) return true;
++        revision = g.revision;
++    }
++    Post([key, revision, img = Decode(d, guest, palette)] {
++        Image up;
++        bool ok = ui_upscale::Make(img, up);
++        if (ok) AddMipmaps(up);
++        std::lock_guard l(g.lock);
++        if (revision != g.revision) return;
++        if (ok) {
++            g.loaded[key] = std::move(up);
++        } else {
++            g.loaded[key] = std::nullopt;
++        }
++    });
++    return true;
++}
++
+ uint64_t Key(const TextureDesc& d, const FormatInfo& fi, const uint8_t* guest, const uint32_t* palette) {
+-    if (!Replacing() && !g.set.dumping) return 0;
++    if (!Replacing() && !g.set.dumping && !g.set.upscale) return 0;
+     // cube maps, volumes and depth stay the console's; linear ones are movie frames and the game's own copies
+     if (d.cube || d.depth > 1 || d.linear || UploadFormat(fi.host) == DXGI_FORMAT_UNKNOWN) return 0;
+     uint32_t shape[] = {d.format, d.width, d.height};
+@@ -582,7 +633,17 @@ void Dump(uint64_t key, const TextureDesc& d, const uint8_t* guest, const uint32
+ 
+ Lookup Take(uint64_t key, Image& out) {
+     auto file = g.files.find(key);
+-    if (!g.set.replacing || file == g.files.end()) return Lookup::None;
++    if (!g.set.replacing || file == g.files.end()) {
++        // a sharper 2D copy made here instead (Upscale)
++        std::lock_guard l(g.lock);
++        if (!g.generated.count(key)) return Lookup::None;
++        auto it = g.loaded.find(key);
++        if (it == g.loaded.end()) return Lookup::Loading;
++        if (!it->second) return Lookup::None;
++        out = std::move(*it->second);
++        g.loaded.erase(it);
++        return Lookup::Ready;
++    }
+     uint32_t revision = 0;
+     {
+         std::lock_guard l(g.lock);
+diff --git a/runtime/gpu/texturedumper.h b/runtime/gpu/texturedumper.h
+index b0facfb..a0ab202 100644
+--- a/runtime/gpu/texturedumper.h
++++ b/runtime/gpu/texturedumper.h
+@@ -35,6 +35,12 @@ uint32_t Generation();
+ // replacement on and the pack holds images
+ bool Replacing();
+ 
++// ui_upscale is on: textures drawn in screen space get sharper copies (ui_upscale.h)
++bool Upscaling();
++// starts making the sharper copy of a texture drawn in screen space, which Take then hands out under its key;
++// false when none is made (setting off, or a pack image for the key)
++bool Upscale(uint64_t key, const TextureDesc& d, const uint8_t* guest, const uint32_t* palette);
++
+ // the name of a texture's bytes, a P8 texture's with its 256 colours; 0 when neither the pack nor dumping applies
+ uint64_t Key(const TextureDesc& d, const FormatInfo& fi, const uint8_t* guest, const uint32_t* palette);
+ 
+diff --git a/runtime/gpu/ui_upscale.cpp b/runtime/gpu/ui_upscale.cpp
+new file mode 100644
+index 0000000..3e0632f
+--- /dev/null
++++ b/runtime/gpu/ui_upscale.cpp
+@@ -0,0 +1,205 @@
++#include "gpu/ui_upscale.h"
++
++#include <algorithm>
++#include <cmath>
++#include <cstring>
++
++namespace gpu::ui_upscale {
++
++namespace {
++
++constexpr uint32_t kMaxSide = 2048;  // the upscaled texture's longest side
++constexpr uint32_t kMaxFactor = 4;
++
++// ---- BC1 BC2 BC3 into BGRA
++
++void Colour565(uint16_t c, uint8_t out[3]) {  // B G R
++    out[2] = uint8_t(((c >> 11) & 31) * 255 / 31);
++    out[1] = uint8_t(((c >> 5) & 63) * 255 / 63);
++    out[0] = uint8_t((c & 31) * 255 / 31);
++}
++
++// a 4x4 block's colours (BC1 with its 3-colour mode when alone) into px, 16 BGRA
++void ColourBlock(const uint8_t* b, bool bc1, uint8_t px[64]) {
++    uint16_t c0 = uint16_t(b[0] | b[1] << 8), c1 = uint16_t(b[2] | b[3] << 8);
++    uint8_t pal[4][4] = {};
++    Colour565(c0, pal[0]);
++    Colour565(c1, pal[1]);
++    for (int i = 0; i < 4; i++) pal[i][3] = 255;
++    if (c0 > c1 || !bc1) {
++        for (int k = 0; k < 3; k++) {
++            pal[2][k] = uint8_t((2 * pal[0][k] + pal[1][k]) / 3);
++            pal[3][k] = uint8_t((pal[0][k] + 2 * pal[1][k]) / 3);
++        }
++    } else {
++        for (int k = 0; k < 3; k++) pal[2][k] = uint8_t((pal[0][k] + pal[1][k]) / 2);
++        pal[3][3] = 0;
++    }
++    uint32_t bits = uint32_t(b[4] | b[5] << 8 | b[6] << 16 | uint32_t(b[7]) << 24);
++    for (int i = 0; i < 16; i++) std::memcpy(px + i * 4, pal[(bits >> (i * 2)) & 3], 4);
++}
++
++void AlphaBc3(const uint8_t* b, uint8_t px[64]) {
++    uint8_t a[8] = {b[0], b[1]};
++    if (a[0] > a[1]) {
++        for (int i = 1; i < 7; i++) a[i + 1] = uint8_t(((7 - i) * a[0] + i * a[1]) / 7);
++    } else {
++        for (int i = 1; i < 5; i++) a[i + 1] = uint8_t(((5 - i) * a[0] + i * a[1]) / 5);
++        a[6] = 0;
++        a[7] = 255;
++    }
++    uint64_t bits = 0;
++    for (int i = 0; i < 6; i++) bits |= uint64_t(b[2 + i]) << (8 * i);
++    for (int i = 0; i < 16; i++) px[i * 4 + 3] = a[(bits >> (3 * i)) & 7];
++}
++
++void AlphaBc2(const uint8_t* b, uint8_t px[64]) {
++    for (int i = 0; i < 16; i++) {
++        uint8_t nib = uint8_t((b[i / 2] >> ((i & 1) * 4)) & 15);
++        px[i * 4 + 3] = uint8_t(nib * 17);
++    }
++}
++
++bool ToBgra(const texturedumper::Image& in, std::vector<uint8_t>& out) {
++    const texturedumper::Level& l = in.levels[0];
++    uint32_t w = in.width, h = in.height;
++    out.assign(size_t(w) * h * 4, 0);
++    if (in.format == DXGI_FORMAT_B8G8R8A8_UNORM) {
++        for (uint32_t y = 0; y < h; y++) std::memcpy(&out[size_t(y) * w * 4], &l.px[size_t(y) * l.pitch], size_t(w) * 4);
++        return true;
++    }
++    bool bc1 = in.format == DXGI_FORMAT_BC1_UNORM, bc2 = in.format == DXGI_FORMAT_BC2_UNORM;
++    if (!bc1 && !bc2 && in.format != DXGI_FORMAT_BC3_UNORM) return false;
++    uint32_t block = bc1 ? 8 : 16;
++    for (uint32_t by = 0; by < (h + 3) / 4; by++)
++        for (uint32_t bx = 0; bx < (w + 3) / 4; bx++) {
++            const uint8_t* b = &l.px[size_t(by) * l.pitch + size_t(bx) * block];
++            uint8_t px[64];
++            ColourBlock(bc1 ? b : b + 8, bc1, px);
++            if (bc2) AlphaBc2(b, px);
++            if (!bc1 && !bc2) AlphaBc3(b, px);
++            for (uint32_t i = 0; i < 16; i++) {
++                uint32_t x = bx * 4 + i % 4, y = by * 4 + i / 4;
++                if (x < w && y < h) std::memcpy(&out[(size_t(y) * w + x) * 4], px + i * 4, 4);
++            }
++        }
++    return true;
++}
++
++// ---- Catmull-Rom
++
++float Weight(float t) {
++    t = std::fabs(t);
++    if (t < 1) return 1.5f * t * t * t - 2.5f * t * t + 1;
++    if (t < 2) return -0.5f * t * t * t + 2.5f * t * t - 4 * t + 2;
++    return 0;
++}
++
++// a mask: most texels fully clear or fully solid, some of each, and few in between (font glyphs, icon cut-outs; not
++// a soft glow, whose alpha fades over many texels)
++bool IsMask(const std::vector<uint8_t>& px) {
++    size_t n = px.size() / 4, clear = 0, solid = 0;
++    for (size_t i = 0; i < n; i++) {
++        uint8_t a = px[i * 4 + 3];
++        clear += a < 16;
++        solid += a > 239;
++    }
++    size_t between = n - clear - solid;
++    return clear > n / 20 && solid > n / 100 && clear + solid > n * 8 / 10 && between * 2 < solid;
++}
++
++}  // namespace
++
++bool Make(const texturedumper::Image& in, texturedumper::Image& out) {
++    if (in.levels.empty() || !in.width || !in.height) return false;
++    uint32_t side = std::max(in.width, in.height);
++    uint32_t f = std::min(kMaxFactor, kMaxSide / side);
++    if (f < 2) return false;
++    std::vector<uint8_t> src;
++    if (!ToBgra(in, src)) return false;
++    bool mask = IsMask(src);
++    uint32_t sw = in.width, sh = in.height, w = sw * f, h = sh * f;
++
++    // separable: rows into a float buffer. Colour is not premultiplied by alpha: additive effects draw colour where
++    // alpha is 0, and would lose it
++    std::vector<float> pre(size_t(sw) * sh * 4);
++    for (size_t i = 0; i < size_t(sw) * sh * 4; i++) pre[i] = src[i] / 255.0f;
++    auto taps = [](uint32_t n, uint32_t f, uint32_t o, int idx[4], float wt[4]) {
++        float s = (o + 0.5f) / f - 0.5f;
++        int base = int(std::floor(s));
++        float sum = 0;
++        for (int t = 0; t < 4; t++) {
++            idx[t] = std::clamp(base - 1 + t, 0, int(n) - 1);
++            wt[t] = Weight(s - float(base - 1 + t));
++            sum += wt[t];
++        }
++        for (int t = 0; t < 4; t++) wt[t] /= sum;
++    };
++    std::vector<float> rows(size_t(w) * sh * 4);
++    for (uint32_t x = 0; x < w; x++) {
++        int idx[4];
++        float wt[4];
++        taps(sw, f, x, idx, wt);
++        for (uint32_t y = 0; y < sh; y++)
++            for (int k = 0; k < 4; k++) {
++                float v = 0;
++                for (int t = 0; t < 4; t++) v += wt[t] * pre[(size_t(y) * sw + idx[t]) * 4 + k];
++                rows[(size_t(y) * w + x) * 4 + k] = v;
++            }
++    }
++    out = {};
++    out.format = DXGI_FORMAT_B8G8R8A8_UNORM;
++    out.width = w;
++    out.height = h;
++    out.levels.resize(1);
++    out.levels[0].pitch = w * 4;
++    out.levels[0].px.resize(size_t(w) * h * 4);
++    uint8_t* dst = out.levels[0].px.data();
++    std::vector<float> alpha(size_t(w) * h);
++    for (uint32_t y = 0; y < h; y++) {
++        int idx[4];
++        float wt[4];
++        taps(sh, f, y, idx, wt);
++        for (uint32_t x = 0; x < w; x++) {
++            float v[4] = {};
++            for (int t = 0; t < 4; t++)
++                for (int k = 0; k < 4; k++) v[k] += wt[t] * rows[(size_t(idx[t]) * w + x) * 4 + k];
++            float a = std::clamp(v[3], 0.0f, 1.0f);
++            alpha[size_t(y) * w + x] = a;
++            uint8_t* p = dst + (size_t(y) * w + x) * 4;
++            for (int k = 0; k < 3; k++) p[k] = uint8_t(std::clamp(v[k], 0.0f, 1.0f) * 255 + 0.5f);
++        }
++    }
++    // A mask's edge follows the console texels' stair steps. Blurred over about one source texel those steps become
++    // a straight slope, and tightened around half coverage the slope is a crisp, smooth outline (much as a distance
++    // field draws text). Two box passes each way are close to a Gaussian.
++    if (mask) {
++        int r = int(f * 3 / 4);
++        std::vector<float> tmp(alpha.size());
++        auto box = [&](std::vector<float>& from, std::vector<float>& to, bool across) {
++            uint32_t n = across ? w : h, lines = across ? h : w;
++            for (uint32_t line = 0; line < lines; line++) {
++                auto at = [&](int i) -> float& {
++                    int c = std::clamp(i, 0, int(n) - 1);
++                    return across ? from[size_t(line) * w + c] : from[size_t(c) * w + line];
++                };
++                float sum = 0;
++                for (int i = -r; i <= r; i++) sum += at(i);
++                for (uint32_t i = 0; i < n; i++) {
++                    (across ? to[size_t(line) * w + i] : to[size_t(i) * w + line]) = sum / float(2 * r + 1);
++                    sum += at(int(i) + r + 1) - at(int(i) - r);
++                }
++            }
++        };
++        for (int pass = 0; pass < 2; pass++) {
++            box(alpha, tmp, true);
++            box(tmp, alpha, false);
++        }
++        float tighten = float(f) / 1.2f;
++        for (float& a : alpha) a = std::clamp((a - 0.5f) * tighten + 0.5f, 0.0f, 1.0f);
++    }
++    for (size_t i = 0; i < alpha.size(); i++) dst[i * 4 + 3] = uint8_t(alpha[i] * 255 + 0.5f);
++    return true;
++}
++
++}  // namespace gpu::ui_upscale
+diff --git a/runtime/gpu/ui_upscale.h b/runtime/gpu/ui_upscale.h
+new file mode 100644
+index 0000000..fd6c418
+--- /dev/null
++++ b/runtime/gpu/ui_upscale.h
+@@ -0,0 +1,15 @@
++#pragma once
++#include "gpu/texturedumper.h"
++
++// Sharper 2D: the textures the game draws in screen space (its fonts, menus, HUD and button icons) are made at up to
++// 4 times their size when first drawn, so they stay smooth at high resolutions. Colour is upscaled with a
++// Catmull-Rom filter; a texture whose alpha is a mask (mostly fully clear or fully solid, as font glyphs are) also
++// gets its edges tightened, so the upscaled glyphs have crisp, smooth outlines instead of the console's blocky ones.
++// Made on the player's machine from their own copy of the game; nothing of the game is shipped.
++namespace gpu::ui_upscale {
++
++// level 0 of in (B8G8R8A8 or BC1/BC2/BC3) into out as B8G8R8A8 with mipmaps; false when the texture is left as it
++// is (too large already, or a format this does not read)
++bool Make(const texturedumper::Image& in, texturedumper::Image& out);
++
++}  // namespace gpu::ui_upscale
 diff --git a/runtime/kernel/kernel.h b/runtime/kernel/kernel.h
 index 163ea09..95751a7 100644
 --- a/runtime/kernel/kernel.h

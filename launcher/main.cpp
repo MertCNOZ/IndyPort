@@ -273,6 +273,7 @@ struct Settings {
     bool dump_textures = false;
     int dump_format = 0;
     bool show_fps = false;
+    bool ui_upscale = true;
     std::string game_path;
     std::string texture_packs = "modern_buttons";  // built-in packs; modern_buttons: the modern Xbox icons
     std::array<int, 16> pad_map = kDefaultPadMap;  // game button -> controller button, -1 none (pad_map.cpp)
@@ -300,6 +301,7 @@ Settings LoadSettings() {
         s.dump_textures = t["dump_textures"].value_or(false);
         s.dump_format = int(t["texture_dump_format"].value_or(int64_t(0)));
         s.show_fps = t["show_fps"].value_or(false);
+        s.ui_upscale = t["ui_upscale"].value_or(true);
         s.game_path = t["game_path"].value_or(std::string());
         s.texture_packs = t["texture_packs"].value_or(s.texture_packs);
         if (const toml::array* a = t["pad_map"].as_array(); a && a->size() == 16) {
@@ -334,6 +336,7 @@ void SaveSettings(const Settings& s) {
     t.insert_or_assign("dump_textures", s.dump_textures);
     t.insert_or_assign("texture_dump_format", int64_t(s.dump_format));
     t.insert_or_assign("show_fps", s.show_fps);
+    t.insert_or_assign("ui_upscale", s.ui_upscale);
     t.insert_or_assign("game_path", s.game_path);
     t.insert_or_assign("texture_packs", s.texture_packs);
     toml::array map;
@@ -719,6 +722,13 @@ void PageGraphics(Ui& ui) {
         if (Combo("##aniso", &cur, names)) s.aniso = levels[cur];
     }
     Desc("Sharper floors and walls seen at an angle, at little cost on most graphics cards.");
+
+    Heading("TEXT AND HUD");
+    Row("Sharp text and HUD");
+    Check("##uiup", &s.ui_upscale);
+    Desc("The game's fonts, menus, HUD and icons are made at up to four times their size when the game starts using "
+         "them, with smooth outlines for text, so they stay sharp at high resolutions. Made on your PC from your copy "
+         "of the game.");
 
     Heading("OVERLAY");
     Row("Show FPS counter");
