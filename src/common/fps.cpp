@@ -7,9 +7,17 @@
 //
 // INDY_FPS=1 also logs every 2 seconds how many frames the game presented a second and how many vertical blanks
 // went by, from the counters in the game's own D3D device.
+//
+// The counter on screen (settings: show_fps, F9 in the game turns it on and off) shows the game's frames a second
+// from that same counter: the frames the game drew, not the times the window was presented.
+#include <imgui.h>
+
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <algorithm>
+#include <cfloat>
+#include <cstdio>
 #include <cstring>
 #include <thread>
 
@@ -67,6 +75,41 @@ void Loop(bool log) {
     }
 }
 }  // namespace
+
+bool g_show_fps = false;
+
+// the frame counter in the top left corner, each host frame inside ImGui
+void FpsOverlay(double) {
+    if (!g_show_fps || !kernel::g_base) return;
+    static uint32_t last_swaps = 0;
+    static auto last = std::chrono::steady_clock::now();
+    static double fps = 0, ms = 0;
+    auto now = std::chrono::steady_clock::now();
+    double el = std::chrono::duration<double>(now - last).count();
+    if (el >= 0.5) {
+        uint32_t dev = Read32(kDevicePtr);
+        uint32_t swaps = dev ? Read32(dev + kSwapCount) : last_swaps;
+        uint32_t n = swaps - last_swaps;
+        fps = n < 10000 ? n / el : 0;
+        ms = fps > 0 ? 1000.0 / fps : 0;
+        last_swaps = swaps;
+        last = now;
+    }
+    ImGuiIO& io = ImGui::GetIO();
+    float scale = std::max(1.0f, io.DisplaySize.y / 720.0f);
+    char text[48];
+    std::snprintf(text, sizeof(text), "%.0f FPS  %.1f ms", fps, ms);
+    ImFont* font = ImGui::GetFont();
+    float size = ImGui::GetFontSize() * 1.4f * scale;
+    ImVec2 ts = font->CalcTextSizeA(size, FLT_MAX, 0, text);
+    float pad = 6 * scale;
+    ImVec2 at(12 * scale, 12 * scale);
+    ImDrawList* d = ImGui::GetForegroundDrawList();
+    d->AddRectFilled(at, ImVec2(at.x + ts.x + pad * 2, at.y + ts.y + pad * 2), IM_COL32(0, 0, 0, 150), 4 * scale);
+    ImU32 colour = fps >= 55 ? IM_COL32(120, 230, 120, 255) : fps >= 28 ? IM_COL32(240, 210, 90, 255)
+                                                                       : IM_COL32(240, 110, 90, 255);
+    d->AddText(font, size, ImVec2(at.x + pad, at.y + pad), colour, text);
+}
 
 void StartFps() {
     const char* v = std::getenv("INDY_FPS");

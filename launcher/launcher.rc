@@ -1,0 +1,3 @@
+// the window icon and the banner on the Home page
+1 ICON "indyport.ico"
+101 RCDATA "banner.jpg"

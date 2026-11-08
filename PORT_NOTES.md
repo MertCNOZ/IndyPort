@@ -229,14 +229,27 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
 4. `xbe_symbols --sign` to produce 5120 signatures (worth sending upstream).
 5. First full build and boot.
 
-## Launcher (launcher/main.cpp → out/build/release/Launcher.exe)
+## Launcher, IndyPort (launcher/main.cpp → out/build/release/IndyPort.exe)
 - Dear ImGui on Win32 + Direct3D 11. The SDK builds SDL3 with SDL_RENDER OFF, so SDL is only used for controller
   names and display modes; imgui_impl_win32 drives controller navigation through XInput.
 - Home: game files status (assets folder: extracted files or an .iso), PLAY (starts IndyET.exe, minimizes, restores when
   the game exits), SETTINGS, or ADD DISC IMAGE (hard link on the same drive, else a copy with progress).
 - Settings sidebar: Graphics (writes settings.toml beside the exe, keeps unknown keys), Controls, Saves (SaveMeta.xbx
   names, open folder, backup to "save backups"), About. LB/RB pages, B/Escape back. launcher.log records Play.
-- Testing: INDY_LAUNCHER_PAGE=1..4 opens a page; tools/postkey.ps1 posts keys; tools/winshot.ps1 <png> Launcher.
+- Testing: INDY_LAUNCHER_PAGE=0..5 opens a page (Home, Graphics, Game, Controls, Saves, About); tools/postkey.ps1
+  posts keys; tools/winshot.ps1 <png> -Name IndyPort.
+- 2026-11-08 redesign: sidebar + bottom bar with Play (Start on a controller plays), banner on Home from
+  launcher/banner.jpg (a royalty-free jungle temple painting the user supplied, embedded as RCDATA 101 and decoded
+  with WIC; cropped to cover, faded in code), icon launcher/indyport.ico cut from the temple in the same image. The
+  game's key art and film stills are not used (copyright).
+- Game files: the Game page picks a disc image (.iso, checked for "MICROSOFT*XBOX*MEDIA" at +0x10000 of partition
+  0, XGD1 0x18300000, XGD2 0xFD90000, XGD3 0x2080000) or an extracted folder (default.xbe, or an .iso in it) and
+  writes `game_path` (UTF-8) into settings.toml. Nothing is copied. The runtime (SDK app::Settings::game_path,
+  game_files.cpp) tries the chosen place first, then assets. Tested: game started from the xiso in the repo root
+  with assets present, log "Game: default.xbe in ...xiso.iso", also after the relaunch; a save loaded.
+- FPS counter: settings key show_fps (a GameInfo option, so the game's own settings save keeps it), drawn by
+  game::FpsOverlay (src/common/fps.cpp) through the GameInfo ui hook from the game's D3D SwapCount, top left, F9
+  toggles it for the run. Tested at 120: "120 FPS 8.3 ms"; F9 hides it.
 
 ## Frame rate, sound, relaunch (2026-11-08)
 - 30 FPS came from the game's own limiter: vars.cfg (signed) fpsLimit=30, frame function 0x9A4C0 spins on rdtsc for

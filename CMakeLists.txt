@@ -43,9 +43,10 @@ endif()
 # target name = GAME_EXE in build.bat, xbe = GAME_XBE
 add_xbe_image(IndyET default.xbe game.toml ${GAME_PARTITIONS} game)
 
-# the launcher: Dear ImGui on Win32 and Direct3D 11, beside the game's exe
+# the launcher, IndyPort.exe: Dear ImGui on Win32 and Direct3D 11, beside the game's exe
 add_executable(IndyLauncher WIN32
     launcher/main.cpp
+    launcher/launcher.rc
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
@@ -53,5 +54,8 @@ add_executable(IndyLauncher WIN32
     ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp)
 target_include_directories(IndyLauncher SYSTEM PRIVATE ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
-target_link_libraries(IndyLauncher PRIVATE tomlplusplus::tomlplusplus SDL3::SDL3-static shell32 comdlg32 d3d11 dxgi)
-set_target_properties(IndyLauncher PROPERTIES OUTPUT_NAME "Launcher")
+target_link_libraries(IndyLauncher PRIVATE tomlplusplus::tomlplusplus SDL3::SDL3-static shell32 shlwapi comdlg32 ole32 windowscodecs d3d11 dxgi)
+set_target_properties(IndyLauncher PROPERTIES OUTPUT_NAME "IndyPort")
+# the resource script embeds these: a new image rebuilds it
+set_source_files_properties(launcher/launcher.rc PROPERTIES OBJECT_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/launcher/banner.jpg;${CMAKE_CURRENT_SOURCE_DIR}/launcher/indyport.ico")

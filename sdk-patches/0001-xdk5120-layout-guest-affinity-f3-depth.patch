@@ -1,3 +1,138 @@
+diff --git a/runtime/app/app.h b/runtime/app/app.h
+index 229e2fa..9253cef 100644
+--- a/runtime/app/app.h
++++ b/runtime/app/app.h
+@@ -27,6 +27,7 @@ struct Settings {
+     bool dump_textures = false;      // each texture once into textures\dumps\ beside the exe
+     uint32_t texture_dump_format = 0;  // 0 PNG, 1 DDS
+     std::string join_ip;                   // co-op: a host past the LAN the system link search also asks
++    std::string game_path;                 // the game's disc image (.iso) or its folder, UTF-8; empty: assets
+ };
+ 
+ Settings& Get();
+@@ -45,8 +46,8 @@ float RenderScale(uint32_t guest_height);
+ bool Widescreen();
+ 
+ std::filesystem::path ExeDir();
+-// the game in assets (game_files.cpp): its folder and this executable's xbe, from the extracted files or a disc
+-// image (.iso), which it mounts as D:; false after telling the player what is missing
++// the game (game_files.cpp), from the settings' game_path first, then assets: its folder and this executable's xbe,
++// from the extracted files or a disc image (.iso), which it mounts as D:; false after telling the player what is missing
+ struct GameFiles {
+     std::filesystem::path dir;
+     std::vector<uint8_t> xbe;
+diff --git a/runtime/app/game_files.cpp b/runtime/app/game_files.cpp
+index a7ddee4..7cfb465 100644
+--- a/runtime/app/game_files.cpp
++++ b/runtime/app/game_files.cpp
+@@ -1,4 +1,5 @@
+-// The game in assets: its files, or a disc image (.iso) with this executable's xbe on it. The xbe must be the one
++// The game: the folder or disc image chosen in the settings (game_path), else assets beside the exe or above it; its
++// files, or a disc image (.iso) with this executable's xbe on it. The xbe must be the one
+ // this executable was recompiled from; another release's would run its own data under this code.
+ #ifndef WIN32_LEAN_AND_MEAN
+ #define WIN32_LEAN_AND_MEAN
+@@ -70,53 +71,83 @@ std::string Sha1(const std::vector<uint8_t>& data) {
+     return hex;
+ }
+ 
++// the settings' game_path, UTF-8
++fs::path ChosenPath() {
++    const std::string& s = Get().game_path;
++    if (s.empty()) return {};
++    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0);
++    std::wstring w(size_t(n), L' ');
++    MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), n);
++    return fs::path(w);
++}
++
+ bool FindGame(GameFiles& game) {
+-    fs::path assets = FindAssets();
+-    std::vector<fs::path> isos;
++    // where to look, in order: the folder or disc image chosen in the settings (the launcher), then assets; in a
++    // folder its extracted files before its disc images
++    struct Place {
++        fs::path path;
++        bool iso;
++    };
++    std::vector<Place> places;
+     std::error_code ec;
+-    if (!assets.empty())
+-        for (auto& e : fs::directory_iterator(assets, ec)) {
++    auto add_dir = [&](const fs::path& dir) {
++        places.push_back({dir, false});
++        std::vector<fs::path> found;
++        for (auto& e : fs::directory_iterator(dir, ec)) {
+             std::wstring ext = e.path().extension().wstring();
+             std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return wchar_t(std::towlower(c)); });
+-            if (ext == L".iso" && e.is_regular_file(ec)) isos.push_back(e.path());
++            if (ext == L".iso" && e.is_regular_file(ec)) found.push_back(e.path());
+         }
+-    std::sort(isos.begin(), isos.end());
++        std::sort(found.begin(), found.end());
++        for (auto& iso : found) places.push_back({iso, true});
++    };
++    if (fs::path chosen = ChosenPath(); !chosen.empty()) {
++        if (fs::is_directory(chosen, ec)) add_dir(chosen);
++        else if (fs::is_regular_file(chosen, ec)) places.push_back({chosen, true});
++        else LOGR("Game: %s from the settings is not there", Get().game_path.c_str());
++    }
++    if (fs::path assets = FindAssets(); !assets.empty()) add_dir(assets);
+ 
+-    // the first copy with this xbe wins, the extracted files before any image; another release is kept to offer
++    // the first copy with this xbe wins; another release is kept to offer
+     GameFiles other;
+     std::unique_ptr<kernel::Disc> other_disc;
+     fs::path other_name;
+-    auto consider = [&](const fs::path& name, std::vector<uint8_t> xbe, std::unique_ptr<kernel::Disc> disc) {
++    auto consider = [&](const fs::path& dir, const fs::path& name, std::vector<uint8_t> xbe,
++                        std::unique_ptr<kernel::Disc> disc) {
+         std::string sha = Sha1(xbe);
+         bool match = Runs(sha);
+         LOGR("Game: %s in %s, sha1 %s%s", IMAGE_XBE, name.string().c_str(), sha.c_str(), match ? "" : ", another release");
+         if (match) {
+-            game = {assets, std::move(xbe)};
++            game = {dir, std::move(xbe)};
+             kernel::MountDisc(std::move(disc));
+             return true;
+         }
+         if (other_name.empty()) {
+-            other = {assets, std::move(xbe)};
++            other = {dir, std::move(xbe)};
+             other_disc = std::move(disc);
+             other_name = name;
+         }
+         return false;
+     };
+ 
+-    std::vector<uint8_t> xbe;
+-    if (!assets.empty() && ReadHostFile(assets / IMAGE_XBE, xbe) && consider(assets, std::move(xbe), nullptr)) return true;
+-    for (const fs::path& iso : isos) {
++    for (const Place& place : places) {
++        std::vector<uint8_t> xbe;
++        if (!place.iso) {
++            if (ReadHostFile(place.path / IMAGE_XBE, xbe) && consider(place.path, place.path, std::move(xbe), nullptr))
++                return true;
++            continue;
++        }
+         auto disc = std::make_unique<kernel::Disc>();
+         std::string error;
+-        if (!disc->Open(iso, error)) {
+-            LOGW("game: %s: %s", iso.string().c_str(), error.c_str());
++        if (!disc->Open(place.path, error)) {
++            LOGR("Game: %s: %s", place.path.string().c_str(), error.c_str());
+             continue;
+         }
+         if (!disc->Load(IMAGE_XBE, xbe)) {
+-            LOGW("game: %s has no %s", iso.string().c_str(), IMAGE_XBE);
++            LOGR("Game: %s has no %s", place.path.string().c_str(), IMAGE_XBE);
+             continue;
+         }
+-        if (consider(iso, std::move(xbe), std::move(disc))) return true;
++        if (consider(place.path.parent_path(), place.path, std::move(xbe), std::move(disc))) return true;
+     }
+ 
+     if (other_name.empty()) {
 diff --git a/runtime/app/main.cpp b/runtime/app/main.cpp
 index e36f7ac..9a07980 100644
 --- a/runtime/app/main.cpp
@@ -11,6 +146,28 @@ index e36f7ac..9a07980 100644
          }
  }
  
+diff --git a/runtime/app/settings.cpp b/runtime/app/settings.cpp
+index 075b3b7..f8c9119 100644
+--- a/runtime/app/settings.cpp
++++ b/runtime/app/settings.cpp
+@@ -54,6 +54,7 @@ void Load() {
+     s.dump_textures = t["dump_textures"].value_or(s.dump_textures);
+     s.texture_dump_format = std::min(t["texture_dump_format"].value_or(s.texture_dump_format), 1u);
+     s.join_ip = t["join_ip"].value_or(s.join_ip);
++    s.game_path = t["game_path"].value_or(s.game_path);
+     for (const Option& o : kGame.options) {
+         if (o.flag) *o.flag = t[o.key].value_or(*o.flag);
+         else *o.value = t[o.key].value_or(*o.value);
+@@ -75,7 +76,8 @@ toml::table Table() {
+                   {"custom_textures", s.custom_textures},
+                   {"dump_textures", s.dump_textures},
+                   {"texture_dump_format", int64_t(s.texture_dump_format)},
+-                  {"join_ip", s.join_ip}};
++                  {"join_ip", s.join_ip},
++                  {"game_path", s.game_path}};
+     for (const Option& o : kGame.options) {
+         if (o.flag) t.insert(o.key, *o.flag);
+         else t.insert(o.key, int64_t(*o.value));
 diff --git a/runtime/audio/xaudio2.cpp b/runtime/audio/xaudio2.cpp
 index f95ebf5..c00e839 100644
 --- a/runtime/audio/xaudio2.cpp
