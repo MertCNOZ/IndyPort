@@ -1,4 +1,4 @@
-# XDK 5120 library data layouts: DRAFT. Becomes sdk/xdk/5120/layout.toml once every value is proven.
+# XDK 5120 library data layouts. Every value is proven; ready to become sdk/xdk/5120/layout.toml.
 # Evidence is from Indiana Jones and the Emperor's Tomb (USA) default.xbe, addresses as in config/game.toml.
 # 5120 sits between 4831 and 5659: the front of CDevice mostly matches 4831, some fields are 4 bytes lower,
 # and everything from RenderTarget on, the miniport block included, sits 0xC00 lower than in 4831.
@@ -10,7 +10,7 @@ CDevice_Push              = 0x0    # OK  every D3DDevice_* compares [dev] with [
 CDevice_PushThreshold     = 0x4    # OK  SetPixelShader 0x49B266, calls MakeSpace 0x49F340 when full
 CDevice_BaseVertex        = 0x1C   # OK  D3DDevice_SetIndices 0x49C3C9 stores BaseVertexIndex
 CDevice_IndexBuffer       = 0x388  # OK  D3DDevice_SetIndices 0x49C39A reads the old one, 0x49C3C2 stores the new one (4831: 0x38C)
-CDevice_ZScale            = 0x510  # TODO used at 0x499CA0/0x499D36, but 0x4A1365 stores the integer 0x40; check it is still the Z scale
+CDevice_ZScale            = 0x50C  # OK  the viewport push 0x498BE5 scales MaxZ - MinZ by it, 0x498BF5 MinZ (4831: 0x510; in 5120 +0x510 holds the surface pitch from 0x498D90)
 CDevice_SuperSampleX      = 0x518  # OK  FMULs scale viewport X by it: 0x498B3E, D3DDevice_Clear 0x49E32A
 CDevice_SuperSampleY      = 0x51C  # OK  FMULs scale viewport Y by it: 0x498B60, D3DDevice_Clear 0x49E360
 CDevice_Transforms        = 0x810  # OK  D3DDevice_SetTransform 0x49B7C6 LEA dev + type*64 + 0x810
@@ -45,15 +45,15 @@ Stream_Stride             = 0x0    # OK  D3DDevice_SetStreamSource 0x49ACC2 stor
 Stream_Buffer             = 0x8    # OK  D3DDevice_SetStreamSource 0x49ACC8 stores the vertex buffer
 PixelShader_Definition    = 0x8    # OK  D3DDevice_CreatePixelShader 0x49B1C1 stores the definition pointer
 # DSOUND
-CDirectSoundStream_Vtable  = 0x0   # TODO
-CDirectSoundStream_Vtable2 = 0x4   # TODO
-EffectsImage_Skip0         = 0x804 # TODO
-EffectsImage_Skip1         = 0x80C # TODO
-EffectsImage_Desc          = 0x818 # TODO
+CDirectSoundStream_Vtable  = 0x0   # OK  the stream constructor 0x4B03D8 stores DSound_StreamVtable 0x61A534 at [ESI - 4]
+CDirectSoundStream_Vtable2 = 0x4   # OK  0x4B03DF stores DSound_StreamVtable2 0x61A528 at [ESI]; 0x4B16F0 does the same
+EffectsImage_Skip0         = 0x804 # OK  0x4B2B25 adds this dword count (DownloadEffectsImage 0x4B07C0 -> 0x4AFF01 -> 0x4AFD4B -> 0x4B2D79)
+EffectsImage_Skip1         = 0x80C # OK  0x4B2B1F loads this dword count
+EffectsImage_Desc          = 0x818 # OK  0x4B2B2E: descriptor at image + 0x818 + (Skip0 + Skip1) * 4
 # XPP
-XPP_Current               = 0x0    # TODO
-XPP_Changed               = 0x4    # TODO
-XPP_Previous              = 0x8    # TODO
+XPP_Current                = 0x0   # OK  XGetDevices 0x5194D3 returns it
+XPP_Changed                = 0x4   # OK  XGetDevices 0x5194D5 clears it, XGetDeviceChanges 0x5194F3 tests it
+XPP_Previous               = 0x8   # OK  XGetDevices 0x5194DB copies Current into it
 
 # Candidates, not yet proven:
 #   0x49EE80 CDevice_KickOff (D3D_SetFence calls it with ECX = device unless flag 2)

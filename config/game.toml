@@ -26,12 +26,12 @@ BinkWait                                             = 0
 CDevice_KickOff                                      = 0
 CDirectSoundStream_AddRef                            = 0x4B0411
 CDirectSoundStream_Discontinuity                     = 0x4B050D
-CDirectSoundStream_Flush                             = 0
+CDirectSoundStream_Flush                             = 0x4B055A  # by hand: DSound_StreamVtable slot 6
 CDirectSoundStream_FlushEx                           = 0
-CDirectSoundStream_GetInfo                           = 0
-CDirectSoundStream_GetStatus                         = 0
+CDirectSoundStream_GetInfo                           = 0x4B04A6  # by hand: DSound_StreamVtable 0x61A534 slot 2 (XMediaObject order; slots 0, 1, 5 match the known AddRef, Release, Discontinuity)
+CDirectSoundStream_GetStatus                         = 0x4B05A5  # by hand: DSound_StreamVtable slot 3
 CDirectSoundStream_Pause                             = 0x4B066D
-CDirectSoundStream_Process                           = 0
+CDirectSoundStream_Process                           = 0x4B05F6  # by hand: DSound_StreamVtable slot 4, ret 0xC
 CDirectSoundStream_Release                           = 0x4B0458
 CDirectSoundStream_SetFilter                         = 0
 CDirectSoundStream_SetFormat                         = 0
@@ -177,19 +177,19 @@ IDirectSound_CommitDeferredSettings                  = 0x4B0F0F
 IDirectSound_CommitEffectData                        = 0
 IDirectSound_CreateSoundBuffer                       = 0x4B1C03
 IDirectSound_DownloadEffectsImage                    = 0x4B07C0
-IDirectSound_EnableHeadphones                        = 0
+IDirectSound_EnableHeadphones                        = 0x4B0EF3  # by hand: its callee 0x4B097D sets or clears the high bit of the speaker flags from a BOOL
 IDirectSound_GetEffectData                           = 0
 IDirectSound_GetOutputLevels                         = 0
 IDirectSound_GetSpeakerConfig                        = 0
 IDirectSound_Release                                 = 0x4AFDA2
-IDirectSound_SetDistanceFactor                       = 0
-IDirectSound_SetDopplerFactor                        = 0
+IDirectSound_SetDistanceFactor                       = 0x4B17AD  # by hand: listener wrapper order as in 5849: Distance, Doppler, Orientation 0x4B17F5, Position, Rolloff, Velocity
+IDirectSound_SetDopplerFactor                        = 0x4B17D1  # by hand: listener wrapper order, see SetDistanceFactor
 IDirectSound_SetEffectData                           = 0
 IDirectSound_SetI3DL2Listener                        = 0x4B18CD
 IDirectSound_SetMixBinHeadroom                       = 0
 IDirectSound_SetOrientation                          = 0x4B17F5
 IDirectSound_SetPosition                             = 0x4B183F
-IDirectSound_SetRolloffFactor                        = 0
+IDirectSound_SetRolloffFactor                        = 0x4B1874  # by hand: listener wrapper order, between SetPosition 0x4B183F and SetVelocity 0x4B1898
 IDirectSound_SetVelocity                             = 0x4B1898
 IDirectSound_SynchPlayback                           = 0
 IDirectSoundBuffer_GetCurrentPosition                = 0x4B0893
@@ -198,7 +198,7 @@ IDirectSoundBuffer_Lock                              = 0
 IDirectSoundBuffer_Pause                             = 0
 IDirectSoundBuffer_Play                              = 0x4B083B
 IDirectSoundBuffer_Release                           = 0x4AFDB8
-IDirectSoundBuffer_SetAllParameters                  = 0
+IDirectSoundBuffer_SetAllParameters                  = 0x4B0F43  # by hand: its callee 0x4B0BA3 copies a DS3DBUFFER field by field from +4, ret 0xC
 IDirectSoundBuffer_SetBufferData                     = 0x4B18ED
 IDirectSoundBuffer_SetCurrentPosition                = 0
 IDirectSoundBuffer_SetEG                             = 0
@@ -242,11 +242,11 @@ WSASend                                              = 0
 WSASendTo                                            = 0
 WSAStartup                                           = 0
 XAudioDownloadEffectsImage                           = 0
-XInitDevices                                         = 0
+XInitDevices                                         = 0x5188F9  # by hand: ret 8, sets up the device tables; the game calls it through the jmp thunk 0x5194C3
 XInputClose                                          = 0x5193F6
 XInputGetCapabilities                                = 0x51E3A9
 XInputGetState                                       = 0x519402
-XInputOpen                                           = 0
+XInputOpen                                           = 0x5193A0  # by hand: ret 0x10, right before XInputClose 0x5193F6, called by the game's pad code
 XInputSetState                                       = 0x51946E
 XLaunchNewImageA                                     = 0x47D073
 XMountUtilityDrive                                   = 0x47C64A
@@ -287,3 +287,15 @@ XInputGetCapabilities = ["?", "?"]  # reads no register, pops 4
 # D3DDevice_End: Ghidra folds it into its tail-jump caller, so name it as a function start
 [[function]]
 at = 0x49D0B0
+
+# CDirectSoundStream_GetInfo: only reached through DSound_StreamVtable
+[[function]]
+at = 0x4B04A6
+
+# CDirectSoundStream_GetStatus: only reached through DSound_StreamVtable
+[[function]]
+at = 0x4B05A5
+
+# CDirectSoundStream_Flush: only reached through DSound_StreamVtable
+[[function]]
+at = 0x4B055A
