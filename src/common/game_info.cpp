@@ -4,6 +4,8 @@
 
 #include <atomic>
 
+#include <toml++/toml.hpp>
+
 #include "app/app.h"
 #include "core/input.h"
 #include "core/log.h"
@@ -17,6 +19,15 @@ void StartFps();                              // fps.cpp
 void FpsOverlay(double fps);                  // fps.cpp
 extern bool g_show_fps;                       // fps.cpp
 void AutopilotPad(int port, input::Pad& pad);
+void LoadPadMap(const void* table);  // pad_map.cpp
+void SavePadMap(void* table);
+void MapPad(int port, input::Pad& pad);
+
+// the settings file's extra keys: the gamepad mapping, and the modern button icons on unless the file says otherwise
+void Load(const void* table) {
+    LoadPadMap(table);
+    if (!static_cast<const toml::table*>(table)->contains("texture_packs")) app::Get().texture_packs = "modern_buttons";
+}
 
 // F9 turns the frame counter on and off for this run (the launcher's setting is what it starts with)
 bool Message(void*, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t*) {
@@ -32,11 +43,12 @@ void Init() {
     StartFps();
 }
 
-// the keyboard, then the autopilot's presses on top; a real controller plugging in or out is logged
+// the controller's buttons as mapped in the settings, the keyboard, then the autopilot's presses on top; a real controller plugging in or out is logged
 void Pad(int port, input::Pad& pad) {
     static std::atomic<bool> real[4];
     if (port >= 0 && port < 4 && real[port].exchange(pad.connected) != pad.connected)
         LOGR("input: controller %s on port %d", pad.connected ? "connected" : "disconnected", port + 1);
+    MapPad(port, pad);
     KeyboardPad(port, pad);
     AutopilotPad(port, pad);
 }
@@ -54,8 +66,8 @@ const app::GameInfo app::kGame = {
                L"extracted game (with default.xbe), or put either in the assets folder beside the game.",
     .images = {{"default.xbe", "IndyET"}},  // each recompiled xbe and its exe, for title launches
     .options = {{"show_fps", &game::g_show_fps, nullptr}},  // game settings kept in the settings file
-    .load = nullptr,                      // reads more from the settings file's toml::table
-    .save = nullptr,                      // writes more into it
+    .load = game::Load,                   // reads more from the settings file's toml::table: pad_map
+    .save = game::SavePadMap,             // writes more into it
     .init = game::Init,                   // after the settings load, before the window and boot
     .loaded = nullptr,                    // image in memory, before its entry point runs
     .window = nullptr,                    // the game window is up

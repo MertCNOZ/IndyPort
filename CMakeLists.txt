@@ -43,6 +43,10 @@ endif()
 # target name = GAME_EXE in build.bat, xbe = GAME_XBE
 add_xbe_image(IndyET default.xbe game.toml ${GAME_PARTITIONS} game)
 
+# the built-in texture packs (our own images, no game art) beside the game: textures\packs\<name>
+add_custom_target(texture_packs ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/packs ${CMAKE_BINARY_DIR}/textures/packs)
+
 # the launcher, IndyPort.exe: Dear ImGui on Win32 and Direct3D 11, beside the game's exe
 add_executable(IndyLauncher WIN32
     launcher/main.cpp

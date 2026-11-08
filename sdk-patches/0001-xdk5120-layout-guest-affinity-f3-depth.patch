@@ -1,16 +1,18 @@
 diff --git a/runtime/app/app.h b/runtime/app/app.h
-index 229e2fa..9253cef 100644
+index 229e2fa..057eb8e 100644
 --- a/runtime/app/app.h
 +++ b/runtime/app/app.h
-@@ -27,6 +27,7 @@ struct Settings {
+@@ -26,7 +26,9 @@ struct Settings {
+     bool custom_textures = true;     // images in textures\replacement\ beside the exe replace the game's
      bool dump_textures = false;      // each texture once into textures\dumps\ beside the exe
      uint32_t texture_dump_format = 0;  // 0 PNG, 1 DDS
++    std::string texture_packs;         // built-in packs in textures\packs\ beside the exe, comma separated
      std::string join_ip;                   // co-op: a host past the LAN the system link search also asks
 +    std::string game_path;                 // the game's disc image (.iso) or its folder, UTF-8; empty: assets
  };
  
  Settings& Get();
-@@ -45,8 +46,8 @@ float RenderScale(uint32_t guest_height);
+@@ -45,8 +47,8 @@ float RenderScale(uint32_t guest_height);
  bool Widescreen();
  
  std::filesystem::path ExeDir();
@@ -147,24 +149,26 @@ index e36f7ac..9a07980 100644
  }
  
 diff --git a/runtime/app/settings.cpp b/runtime/app/settings.cpp
-index 075b3b7..f8c9119 100644
+index 075b3b7..5abca1c 100644
 --- a/runtime/app/settings.cpp
 +++ b/runtime/app/settings.cpp
-@@ -54,6 +54,7 @@ void Load() {
+@@ -54,6 +54,8 @@ void Load() {
      s.dump_textures = t["dump_textures"].value_or(s.dump_textures);
      s.texture_dump_format = std::min(t["texture_dump_format"].value_or(s.texture_dump_format), 1u);
      s.join_ip = t["join_ip"].value_or(s.join_ip);
++    s.texture_packs = t["texture_packs"].value_or(s.texture_packs);
 +    s.game_path = t["game_path"].value_or(s.game_path);
      for (const Option& o : kGame.options) {
          if (o.flag) *o.flag = t[o.key].value_or(*o.flag);
          else *o.value = t[o.key].value_or(*o.value);
-@@ -75,7 +76,8 @@ toml::table Table() {
+@@ -75,7 +77,9 @@ toml::table Table() {
                    {"custom_textures", s.custom_textures},
                    {"dump_textures", s.dump_textures},
                    {"texture_dump_format", int64_t(s.texture_dump_format)},
 -                  {"join_ip", s.join_ip}};
 +                  {"join_ip", s.join_ip},
-+                  {"game_path", s.game_path}};
++                  {"game_path", s.game_path},
++                  {"texture_packs", s.texture_packs}};
      for (const Option& o : kGame.options) {
          if (o.flag) t.insert(o.key, *o.flag);
          else t.insert(o.key, int64_t(*o.value));
@@ -369,6 +373,94 @@ index 3f9d4e7..533efaa 100644
               "hashed | %.1f tex uploads %.2f MB, %.1f new tex, %.1f new targets, %.1f target uploads, %.1f shrinks, "
               "%.1f read-backs %.1f late | %llu shaders %llu psos this second",
               p.draws / n, p.raw / n, p.verts / n / 1000.0, p.upload / n / 1048576.0, p.overflow / n, p.sigs / n,
+diff --git a/runtime/gpu/texturedumper.cpp b/runtime/gpu/texturedumper.cpp
+index 612db6c..41dcc3b 100644
+--- a/runtime/gpu/texturedumper.cpp
++++ b/runtime/gpu/texturedumper.cpp
+@@ -53,16 +53,19 @@ using Clock = std::chrono::steady_clock;
+ 
+ // the settings as Update latched them, the render thread's
+ struct Latched {
+-    bool replacing = false;
++    bool replacing = false;  // the player's pack (custom_textures) or a built-in one is on
+     bool dumping = false;
+     uint32_t format = 0;
++    bool custom = false;     // custom_textures: textures/replacement
++    std::string packs;       // texture_packs: built-in packs under textures/packs, comma separated
+     bool operator==(const Latched&) const = default;
+ };
+ 
+ struct Pack {
+     Latched set;
+     uint32_t generation = 1;
+-    fs::path pack_dir;
++    fs::path pack_dir;                             // textures/replacement, the player's
++    std::vector<fs::path> builtin;                 // textures/packs/<name> for each name in texture_packs
+     fs::path dump_dir;
+     std::unordered_map<uint64_t, fs::path> files;  // by the key in their names; written by Update alone
+     HANDLE watch = INVALID_HANDLE_VALUE;           // changes under pack_dir
+@@ -173,17 +176,24 @@ std::string Utf8(const fs::path& p) {
+     return std::string(s.begin(), s.end());
+ }
+ 
+-void ListPack(const fs::path& dir) {
+-    g.files.clear();
++void ListDir(const fs::path& dir) {
++    size_t before = g.files.size();
+     std::error_code ec;
+     fs::recursive_directory_iterator it(dir, ec);
+     for (; !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+         const fs::path& p = it->path();
+         bool image = _wcsicmp(p.extension().c_str(), L".dds") == 0 || _wcsicmp(p.extension().c_str(), L".png") == 0;
+         uint64_t key = image ? KeyInName(p.stem().wstring()) : 0;
+-        if (key) g.files.emplace(key, p);
++        if (key) g.files.emplace(key, p);  // the first listed wins
+     }
+-    LOGR("texture pack: %zu images in %s", g.files.size(), Utf8(dir).c_str());
++    LOGR("texture pack: %zu images in %s", g.files.size() - before, Utf8(dir).c_str());
++}
++
++// the player's pack first, so its images win over a built-in pack's for the same texture
++void ListPack() {
++    g.files.clear();
++    if (g.set.custom) ListDir(g.pack_dir);
++    for (const fs::path& dir : g.builtin) ListDir(dir);
+ }
+ 
+ // DDS files
+@@ -491,11 +501,22 @@ Image Decode(const TextureDesc& d, const uint8_t* guest, const uint32_t* palette
+ // the settings into g.set; false when none changed
+ bool LatchSettings() {
+     const app::Settings& s = app::Get();
+-    Latched now{s.custom_textures, s.dump_textures, s.texture_dump_format};
++    Latched now{s.custom_textures || !s.texture_packs.empty(), s.dump_textures, s.texture_dump_format,
++                s.custom_textures, s.texture_packs};
+     if (now == g.set) return false;
+     g.set = now;
+     fs::path root = app::ExeDir() / "textures";
+     g.pack_dir = root / "replacement";
++    g.builtin.clear();
++    for (size_t at = 0; at <= now.packs.size();) {
++        size_t end = std::min(now.packs.find(',', at), now.packs.size());
++        std::string name = now.packs.substr(at, end - at);
++        name.erase(0, name.find_first_not_of(' '));
++        name.erase(name.find_last_not_of(' ') + 1);
++        if (!name.empty() && name.find_first_of("\\/:.") == std::string::npos) g.builtin.push_back(root / "packs" / name);
++        at = end + 1;
++    }
++    g.changed = Clock::time_point{};  // listed again at the next update, with or without the folder watch
+     if (now.dumping) {
+         g.dump_dir = root / "dumps";
+         std::error_code ec;
+@@ -532,7 +553,7 @@ bool UpdatePackFiles() {
+     NoteFolderChange(now);
+     if (!g.changed || now - *g.changed < kSettle) return false;
+     g.changed.reset();
+-    ListPack(g.pack_dir);
++    ListPack();
+     std::lock_guard l(g.lock);
+     g.revision++;
+     g.asked.clear();
 diff --git a/runtime/kernel/kernel.h b/runtime/kernel/kernel.h
 index 163ea09..95751a7 100644
 --- a/runtime/kernel/kernel.h

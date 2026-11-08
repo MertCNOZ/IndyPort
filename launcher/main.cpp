@@ -27,6 +27,7 @@
 #include <toml++/toml.hpp>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -249,6 +250,18 @@ std::wstring PickFolder(HWND owner) {
 
 // ---- settings.toml beside the game
 
+// the gamepad mapping: for each button of the Xbox controller the game reads, the button of a modern controller
+// that presses it (the order of src/common/pad_map.cpp)
+constexpr std::array<int, 16> kDefaultPadMap = {0, 1, 2, 3, 5, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+const char* kGameButtons[16] = {"A",          "B",           "X",           "Y",
+                                "Black",      "White",       "Left trigger", "Right trigger",
+                                "D-pad up",   "D-pad down",  "D-pad left",  "D-pad right",
+                                "Start",      "Back",        "Left stick click", "Right stick click"};
+const char* kControllerButtons[16] = {"A",       "B",          "X",          "Y",
+                                      "LB",      "RB",         "LT",         "RT",
+                                      "D-pad up", "D-pad down", "D-pad left", "D-pad right",
+                                      "Menu",    "View",       "LS (click)", "RS (click)"};
+
 struct Settings {
     int display_mode = 1;  // fullscreen, borderless, windowed
     int width = 0, height = 0;
@@ -261,6 +274,8 @@ struct Settings {
     int dump_format = 0;
     bool show_fps = false;
     std::string game_path;
+    std::string texture_packs = "modern_buttons";  // built-in packs; modern_buttons: the modern Xbox icons
+    std::array<int, 16> pad_map = kDefaultPadMap;  // game button -> controller button, -1 none (pad_map.cpp)
     bool operator==(const Settings&) const = default;
 };
 
@@ -286,6 +301,16 @@ Settings LoadSettings() {
         s.dump_format = int(t["texture_dump_format"].value_or(int64_t(0)));
         s.show_fps = t["show_fps"].value_or(false);
         s.game_path = t["game_path"].value_or(std::string());
+        s.texture_packs = t["texture_packs"].value_or(s.texture_packs);
+        if (const toml::array* a = t["pad_map"].as_array(); a && a->size() == 16) {
+            std::array<int, 16> m{};
+            bool ok = true;
+            for (size_t i = 0; i < 16; i++) {
+                m[i] = int((*a)[i].value_or(int64_t(-2)));
+                ok &= m[i] >= -1 && m[i] <= 15;
+            }
+            if (ok) s.pad_map = m;
+        }
     } catch (...) {
     }
     return s;
@@ -310,6 +335,10 @@ void SaveSettings(const Settings& s) {
     t.insert_or_assign("texture_dump_format", int64_t(s.dump_format));
     t.insert_or_assign("show_fps", s.show_fps);
     t.insert_or_assign("game_path", s.game_path);
+    t.insert_or_assign("texture_packs", s.texture_packs);
+    toml::array map;
+    for (int v : s.pad_map) map.push_back(int64_t(v));
+    t.insert_or_assign("pad_map", std::move(map));
     std::ofstream out(SettingsFile());
     out << t << "\n";
 }
@@ -763,8 +792,83 @@ void PageGame(Ui& ui) {
     Desc("The Xbox hard disk of the port: hdd\\E\\UDATA holds the saved games.");
 }
 
-void PageControls(Ui&) {
-    PageTitle("CONTROLS", "A controller, or the keyboard as the first controller.");
+// a modern controller's button as a small badge: A B X Y as coloured letters in a dark circle, the others as text in
+// a rounded box
+void ButtonGlyph(int button) {
+    float s = ImGui::GetFrameHeight();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(s * 1.6f, s));
+    if (button < 0) return;
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    ImVec2 c(p.x + s * 0.8f, p.y + s * 0.5f);
+    const char* text = kControllerButtons[button];
+    const char* shortname[16] = {"A",  "B",    "X",    "Y",     "LB",   "RB",   "LT", "RT",
+                                 "UP", "DOWN", "LEFT", "RIGHT", "MENU", "VIEW", "LS", "RS"};
+    if (button < 4) {
+        const ImU32 colours[4] = {IM_COL32(110, 200, 70, 255), IM_COL32(230, 70, 60, 255), IM_COL32(70, 140, 235, 255),
+                                  IM_COL32(240, 200, 50, 255)};
+        d->AddCircleFilled(c, s * 0.42f, IM_COL32(36, 36, 38, 255), 24);
+        d->AddCircle(c, s * 0.42f, IM_COL32(80, 80, 84, 255), 24, 1.2f);
+        ImVec2 ts = ImGui::CalcTextSize(text);
+        d->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), colours[button], text);
+        return;
+    }
+    const char* t = shortname[button];
+    ImVec2 ts = ImGui::CalcTextSize(t);
+    float w = std::max(ts.x + s * 0.4f, s * 0.84f), h = s * 0.74f;
+    d->AddRectFilled(ImVec2(c.x - w * 0.5f, c.y - h * 0.5f), ImVec2(c.x + w * 0.5f, c.y + h * 0.5f),
+                     IM_COL32(36, 36, 38, 255), h * 0.3f);
+    d->AddRect(ImVec2(c.x - w * 0.5f, c.y - h * 0.5f), ImVec2(c.x + w * 0.5f, c.y + h * 0.5f), IM_COL32(80, 80, 84, 255),
+               h * 0.3f, 0, 1.2f);
+    d->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32(230, 230, 232, 255), t);
+}
+
+void PageControls(Ui& ui) {
+    PageTitle("CONTROLS", "Gamepad mapping, controllers and the keyboard.");
+    Heading("BUTTON ICONS");
+    Row("In-game button icons");
+    {
+        bool modern = ui.s.texture_packs.find("modern_buttons") != std::string::npos;
+        int cur = modern ? 0 : 1;
+        if (Combo("##icons", &cur, {"Modern Xbox", "Original Xbox"})) ui.s.texture_packs = cur == 0 ? "modern_buttons" : "";
+    }
+    Desc("Modern Xbox shows today's controller buttons (LB and RB for White and Black, LT, RT, LS, RS) in the "
+         "game's prompts and menus, drawn sharp for high resolutions. Applied when the game starts.");
+    Heading("GAMEPAD MAPPING");
+    Desc("Which button of your controller presses each button of the game's Xbox controller. The game's Black and "
+         "White buttons are RB and LB by default. Applied when the game starts.");
+    std::vector<std::string> names = {"None"};
+    for (const char* n : kControllerButtons) names.push_back(n);
+    for (int g = 0; g < 16; g++) {
+        Row(kGameButtons[g]);
+        int& m = ui.s.pad_map[size_t(g)];
+        ButtonGlyph(m);
+        ImGui::SameLine();
+        int cur = m + 1;
+        ImGui::PushID(g);
+        if (Combo("##map", &cur, names)) {
+            // a controller button presses one game button: the one it pressed before gets this one's old button
+            int chosen = cur - 1;
+            if (chosen >= 0)
+                for (int& other : ui.s.pad_map)
+                    if (&other != &m && other == chosen) other = m;
+            m = chosen;
+        }
+        ImGui::PopID();
+        if (m != kDefaultPadMap[size_t(g)]) {
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("changed");
+            ImGui::PopStyleColor();
+        }
+    }
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::SetCursorPosX(g_col);
+    ImGui::BeginDisabled(ui.s.pad_map == kDefaultPadMap);
+    if (Button("Reset gamepad to defaults", ImGui::GetFontSize() * 14)) ui.s.pad_map = kDefaultPadMap;
+    ImGui::EndDisabled();
+    Desc(nullptr);
     Heading("CONTROLLERS");
     int n = 0;
     SDL_JoystickID* pads = SDL_GetGamepads(&n);
