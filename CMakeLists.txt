@@ -42,3 +42,16 @@ endif()
 
 # target name = GAME_EXE in build.bat, xbe = GAME_XBE
 add_xbe_image(IndyET default.xbe game.toml ${GAME_PARTITIONS} game)
+
+# the launcher: Dear ImGui on Win32 and Direct3D 11, beside the game's exe
+add_executable(IndyLauncher WIN32
+    launcher/main.cpp
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp)
+target_include_directories(IndyLauncher SYSTEM PRIVATE ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+target_link_libraries(IndyLauncher PRIVATE tomlplusplus::tomlplusplus SDL3::SDL3-static shell32 comdlg32 d3d11 dxgi)
+set_target_properties(IndyLauncher PROPERTIES OUTPUT_NAME "Launcher")

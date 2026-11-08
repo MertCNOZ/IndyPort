@@ -228,3 +228,12 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
 3. Fill in the missing XDK functions and data, then write `xdk/5120/layout.toml`.
 4. `xbe_symbols --sign` to produce 5120 signatures (worth sending upstream).
 5. First full build and boot.
+
+## Launcher (launcher/main.cpp → out/build/release/Launcher.exe)
+- Dear ImGui on Win32 + Direct3D 11. The SDK builds SDL3 with SDL_RENDER OFF, so SDL is only used for controller
+  names and display modes; imgui_impl_win32 drives controller navigation through XInput.
+- Home: game files status (assets folder: extracted files or an .iso), PLAY (starts IndyET.exe, minimizes, restores when
+  the game exits), SETTINGS, or ADD DISC IMAGE (hard link on the same drive, else a copy with progress).
+- Settings sidebar: Graphics (writes settings.toml beside the exe, keeps unknown keys), Controls, Saves (SaveMeta.xbx
+  names, open folder, backup to "save backups"), About. LB/RB pages, B/Escape back. launcher.log records Play.
+- Testing: INDY_LAUNCHER_PAGE=1..4 opens a page; tools/postkey.ps1 posts keys; tools/winshot.ps1 <png> Launcher.
