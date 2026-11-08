@@ -4,6 +4,7 @@
 # and everything from RenderTarget on, the miniport block included, sits 0xC00 lower than in 4831.
 #
 # Status per value: OK = proven at the address given, TODO = still the 4831 value, unverified.
+[layout]
 
 # D3D8 CDevice, the device D3D_pDevice (0x4A9668) points at
 CDevice_Push              = 0x0    # OK  every D3DDevice_* compares [dev] with [dev+4], e.g. SetPixelShader 0x49B264

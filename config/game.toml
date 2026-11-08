@@ -23,7 +23,7 @@ BinkDoFrame                                          = 0
 BinkGetSummary                                       = 0
 BinkNextFrame                                        = 0
 BinkWait                                             = 0
-CDevice_KickOff                                      = 0
+CDevice_KickOff                                      = 0x49EE80  # by hand: fastcall on the device, called by D3D_SetFence and MakeRequestedSpace; 216 bytes (4831: 0xE3)
 CDirectSoundStream_AddRef                            = 0x4B0411
 CDirectSoundStream_Discontinuity                     = 0x4B050D
 CDirectSoundStream_Flush                             = 0x4B055A  # by hand: DSound_StreamVtable slot 6
@@ -57,14 +57,14 @@ crt_pow                                              = 0x4827E4  # from 5849 sig
 crt_sin                                              = 0
 crt_sqrt                                             = 0
 crt_tan                                              = 0
-D3D_BlockOnNonSurfaceResource                        = 0
-D3D_BlockOnResource                                  = 0
-D3D_BlockOnTime                                      = 0
+D3D_BlockOnNonSurfaceResource                        = 0x49F440  # by hand: D3D_BlockOnTime on the resource fence [res+8], ret 4, 54 bytes = 4831 0x36
+D3D_BlockOnResource                                  = 0x49F3C0  # by hand: D3DResource_BlockUntilNotBusy 0x49D410 jumps to it; ret 4, 120 bytes = 4831 0x78
+D3D_BlockOnTime                                      = 0x49F080  # by hand: ret 8, 310 bytes = the 4831 length 0x136; called by Swap, MakeRequestedSpace, the BlockOn* functions
 D3D_InitDefaultState                                 = 0x4A0B60
 D3D_InternalAddRef                                   = 0x49D220
 D3D_InternalRelease                                  = 0x49D420
-D3D_KickOffAndWaitForIdle                            = 0
-D3D_MakeRequestedSpace                               = 0
+D3D_KickOffAndWaitForIdle                            = 0x49F3A0  # by hand: D3D_BlockOnTime([dev+0x2C], 2), 17 bytes = 4831 0x11
+D3D_MakeRequestedSpace                               = 0x49F1C0  # by hand: reads the GPU get pointer at miniport register +0x44; ret 8, 368 bytes (4831: 0x173)
 D3D_SetFence                                         = 0x49EFD0  # by hand: pushes Time dev+0x2C with method 0x1D70, adds 2
 D3DDevice_Begin                                      = 0x49D070
 D3DDevice_BeginPush                                  = 0
@@ -77,6 +77,7 @@ D3DDevice_CreateVertexShader                         = 0x49A8F0
 D3DDevice_DeletePixelShader                          = 0x49B1F0
 D3DDevice_DeleteVertexShader                         = 0x49AF30
 D3DDevice_DrawIndexedVertices                        = 0x49CD70
+D3DDevice_DrawIndexedVerticesUP                      = 0x49CC30  # by hand: not in the signature lists, but the runtime replaces it; ret 0x14, pushes 0x417FC then 0x1818 inline vertices from an index list; without it the inline vertices run past the end of guest memory (crash at 0x320DB1)
 D3DDevice_DrawVertices                               = 0
 D3DDevice_DrawVerticesUP                             = 0x49CAD0  # by hand: pushes 0x417FC begin then 0x1818 inline array
 D3DDevice_EnableOverlay                              = 0
@@ -94,7 +95,7 @@ D3DDevice_IsFencePending                             = 0
 D3DDevice_LightEnable                                = 0
 D3DDevice_LoadVertexShader                           = 0
 D3DDevice_LoadVertexShaderProgram                    = 0
-D3DDevice_MakeSpace                                  = 0
+D3DDevice_MakeSpace                                  = 0x49F340  # by hand: calls D3D_MakeRequestedSpace(size / 2, size), 15 bytes = 4831 0xF; called when [dev] >= [dev+4]
 D3DDevice_PersistDisplay                             = 0
 D3DDevice_Release                                    = 0
 D3DDevice_Reset                                      = 0
@@ -244,7 +245,7 @@ WSAStartup                                           = 0
 XAudioDownloadEffectsImage                           = 0
 XInitDevices                                         = 0x5188F9  # by hand: ret 8, sets up the device tables; the game calls it through the jmp thunk 0x5194C3
 XInputClose                                          = 0x5193F6
-XInputGetCapabilities                                = 0x51E3A9
+XInputGetCapabilities                                = 0  # 4831 signatures matched 0x51E3A9 by constants (0.60), wrong: 1 argument, no callers; the game does not link it
 XInputGetState                                       = 0x519402
 XInputOpen                                           = 0x5193A0  # by hand: ret 0x10, right before XInputClose 0x5193F6, called by the game's pad code
 XInputSetState                                       = 0x51946E
@@ -268,10 +269,10 @@ XOnlineStartup                                       = 0
 D3D_DeferredTextureState    = 0x4A91D0  # by hand: D3DDevice_SetTextureStageStateNotInline 0x49957C stores into it
 D3D_Device                  = 0x4A9670
 D3D_DirtyFlags              = 0x4A91C8  # by hand: D3DDevice_SetPixelShader 0x49B236 ors 0x4800 into it
-D3D_FvfShader               = 0
+D3D_FvfShader               = 0x4AB878  # by hand: D3DDevice_SetVertexShader 0x49B06A loads it for an FVF handle
 D3D_IndexData               = 0x4A91C4  # by hand: D3DDevice_SetIndices 0x49C389 stores the index data
 D3D_pDevice                 = 0x4A9668  # by hand: every D3DDevice_* loads the device from it
-D3D_RenderState             = 0
+D3D_RenderState             = 0x4A93D0  # by hand: D3DDevice_SetPixelShader 0x49B2FF copies 0x39 dwords to it; FogColor 138 at +0x228, CullMode 147 at +0x24C, LineWidth 157 at +0x274 match the setters
 D3D_SimpleRenderStateEncode = 0x520270
 D3D_Streams                 = 0x4AB6A0  # by hand: D3DDevice_SetStreamSource indexes it by n * 12
 DSound_StreamVtable         = 0x61A534
@@ -282,7 +283,6 @@ XPP_MemoryUnitType          = 0
 # argument locations in API order for functions a link time code generated library compiled with another
 # convention: a register (eax ebx ecx edx esi edi ebp) or "stack" for the next stack slot, which the callee pops
 [abi]
-XInputGetCapabilities = ["?", "?"]  # reads no register, pops 4
 
 # D3DDevice_End: Ghidra folds it into its tail-jump caller, so name it as a function start
 [[function]]

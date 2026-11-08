@@ -1,0 +1,108 @@
+diff --git a/runtime/app/main.cpp b/runtime/app/main.cpp
+index e36f7ac..9a07980 100644
+--- a/runtime/app/main.cpp
++++ b/runtime/app/main.cpp
+@@ -73,7 +73,7 @@ void DumpThreads() {
+     for (auto& t : kernel::Threads())
+         if (t->ctx) {
+             LOGI("thread %X", t->id);
+-            kernel::LogGuestStack(*t->ctx, 32);
++            kernel::LogGuestStack(*t->ctx, 512);
+         }
+ }
+ 
+diff --git a/runtime/kernel/kernel.h b/runtime/kernel/kernel.h
+index 163ea09..50a3161 100644
+--- a/runtime/kernel/kernel.h
++++ b/runtime/kernel/kernel.h
+@@ -211,6 +211,11 @@ const std::string& KeptPicture();
+ // event and the old instance, waiting in Relaunch with its window still up, exits.
+ std::wstring HandoverEvent(unsigned long process);
+ inline std::atomic<bool> g_relaunching{false};
++// Host CPU mask for the threads that run guest code, 0 leaves them unpinned. The Xbox has one CPU: titles whose
++// own locks and flags are plain read-modify-writes (fine when threads only interleave) race once those threads
++// run in parallel. A game sets this from GameInfo::init, before boot, to run them all on one core as the console
++// did.
++inline std::atomic<uint64_t> g_guest_affinity{0};
+ 
+ using KernelFn = void (*)(X86Context& ctx, uint8_t* base);
+ void RegisterExport(uint32_t ordinal, const char* name, KernelFn fn);
+diff --git a/runtime/kernel/threads.cpp b/runtime/kernel/threads.cpp
+index a8acfd6..be194bb 100644
+--- a/runtime/kernel/threads.cpp
++++ b/runtime/kernel/threads.cpp
+@@ -101,6 +101,7 @@ void Spawn(std::function<void()> fn) {
+ #ifdef _WIN32
+     auto entry = [](void* p) -> DWORD {
+         std::unique_ptr<std::function<void()>> g(static_cast<std::function<void()>*>(p));
++        if (uint64_t mask = g_guest_affinity.load()) ::SetThreadAffinityMask(::GetCurrentThread(), DWORD_PTR(mask));
+         (*g)();
+         return 0;
+     };
+diff --git a/xdk/5120/layout.toml b/xdk/5120/layout.toml
+new file mode 100644
+index 0000000..a3ac3d8
+--- /dev/null
++++ b/xdk/5120/layout.toml
+@@ -0,0 +1,61 @@
++# XDK 5120 library data layouts the runtime reads or writes. Each value is proven by the default.xbe
++# (Indiana Jones and the Emperor's Tomb, USA) code at the address given.
++# 5120 sits between 4831 and 5659: the front of CDevice mostly matches 4831, some fields are 4 bytes lower,
++# and everything from RenderTarget on, the miniport block included, sits 0xC00 lower than in 4831.
++#
++# Status per value: OK = proven at the address given, TODO = still the 4831 value, unverified.
++[layout]
++
++# D3D8 CDevice, the device D3D_pDevice (0x4A9668) points at
++CDevice_Push              = 0x0    # OK  every D3DDevice_* compares [dev] with [dev+4], e.g. SetPixelShader 0x49B264
++CDevice_PushThreshold     = 0x4    # OK  SetPixelShader 0x49B266, calls MakeSpace 0x49F340 when full
++CDevice_BaseVertex        = 0x1C   # OK  D3DDevice_SetIndices 0x49C3C9 stores BaseVertexIndex
++CDevice_IndexBuffer       = 0x388  # OK  D3DDevice_SetIndices 0x49C39A reads the old one, 0x49C3C2 stores the new one (4831: 0x38C)
++CDevice_ZScale            = 0x50C  # OK  the viewport push 0x498BE5 scales MaxZ - MinZ by it, 0x498BF5 MinZ (4831: 0x510; in 5120 +0x510 holds the surface pitch from 0x498D90)
++CDevice_SuperSampleX      = 0x518  # OK  FMULs scale viewport X by it: 0x498B3E, D3DDevice_Clear 0x49E32A
++CDevice_SuperSampleY      = 0x51C  # OK  FMULs scale viewport Y by it: 0x498B60, D3DDevice_Clear 0x49E360
++CDevice_Transforms        = 0x810  # OK  D3DDevice_SetTransform 0x49B7C6 LEA dev + type*64 + 0x810
++CDevice_Textures          = 0xB38  # OK  D3DDevice_SetTexture 0x49C140 reads, 0x49C179 stores [stage]
++CDevice_Palettes          = 0xB48  # OK  D3DDevice_SetPalette 0x49C2ED reads, 0x49C325 stores [stage]
++CDevice_RenderTarget      = 0x15B4 # OK  D3DDevice_GetRenderTarget2 0x49BF96 returns it; D3DDevice_Clear 0x49E0C3 (4831: 0x21B4)
++CDevice_Depth             = 0x15B8 # OK  D3DDevice_GetDepthStencilSurface2 0x49BFB6 returns it; D3DDevice_Clear 0x49E0BB (4831: 0x21B8)
++CDevice_BackBuffer        = 0x15C0 # OK  D3DDevice_GetBackBuffer2 0x49BC40 returns it for index 0 (4831: 0x21C0)
++CDevice_FrontBuffer       = 0x15C4 # OK  D3DDevice_GetBackBuffer2 0x49BC25 returns it for index -1 (4831: 0x21C4)
++CDevice_SwapCount         = 0x2010 # OK  D3DDevice_Swap 0x49DF70 increments it, 0x49DFE1 returns it (4831: 0x2C10)
++CDevice_Size              = 0x2030 # OK  Direct3D_CreateDevice 0x49E94B clears 0x80C dwords of the device on failure (4831: 0x2C30)
++CDevice_Flags             = 0x8    # OK  D3DDevice_Swap 0x49DF3F tests bit 0x4000; DrawVerticesUP 0x49CB0A ors 0x800
++CDevice_Time              = 0x2C   # OK  D3D_SetFence 0x49EFE4 pushes it, 0x49F05A adds 2; SetPalette 0x49C2F8 (4831: 0x30)
++CDevice_PixelShader       = 0x36C  # OK  D3DDevice_SetPixelShader 0x49B218 reads, 0x49B228 stores the handle (4831: 0x370)
++CDevice_VertexShader      = 0x37C  # OK  D3DDevice_SetVertexShader 0x49B0A8 stores the shader object (4831: 0x380)
++CDevice_BackBufferScale   = 0x528  # OK  0x49DA59 and 0x4999EB read the X scale, the Y scale at +4 (0x52C)
++CDevice_Viewport          = 0xA90  # OK  D3DDevice_SetViewport 0x49C0CB to 0x49C0EF stores X, Y, Width, Height, MinZ, MaxZ
++CDevice_ScreenSpaceOffset = 0xAA8  # OK  D3DDevice_SetScreenSpaceOffset 0x49C823 stores x + const, 0x49C833 y + const at +4
++CDevice_AutoDepth         = 0x15CC # OK  the frame buffer init 0x4A0EE9 and 0x4A11DF store the depth buffer (4831: 0x21CC)
++CDevice_VBlankCallback    = 0x1950 # OK  miniport + 0x190; the miniport is at +0x17C0 (D3DDevice_SetGammaRamp 0x49B733) (4831: 0x2550)
++CDevice_VBlankEvent       = 0x1954 # OK  D3DDevice_BlockUntilVerticalBlank 0x49B927 waits on it, 0x49B91B clears its SignalState
++CDevice_DisplayFlags      = 0x1974 # OK  0x49D5FB tests it (miniport + 0x1B4)
++CDevice_VBlankCount       = 0x1980 # OK  0x49D677 reads, 0x49D68B stores it (miniport + 0x1C0)
++CDevice_Field             = 0x1990 # OK  miniport + 0x1D0 like every other miniport field here; no reader seen yet
++CDevice_GammaRamps        = 0x199C # OK  D3DDevice_SetGammaRamp 0x49B763 copies to miniport + 0x1DC + index * 0x300
++CDevice_GammaPending      = 0x1F9C # OK  D3DDevice_SetGammaRamp 0x49B791 sets [miniport + 0x7DC + index * 4]
++
++DirtyFlags_Texture        = 0x4800 # OK  D3DDevice_SetPixelShader 0x49B236 ors it into D3D_DirtyFlags 0x4A91C8
++TextureState_Stage        = 32     # OK  D3DDevice_SetTextureStageStateNotInline 0x49956B: [stage * 32 + type] dwords at 0x4A91D0
++Stream_Size               = 12     # OK  D3DDevice_SetStreamSource 0x49AC7A indexes D3D_Streams 0x4AB6A0 by n * 12
++Stream_Stride             = 0x0    # OK  D3DDevice_SetStreamSource 0x49ACC2 stores Stride
++Stream_Buffer             = 0x8    # OK  D3DDevice_SetStreamSource 0x49ACC8 stores the vertex buffer
++PixelShader_Definition    = 0x8    # OK  D3DDevice_CreatePixelShader 0x49B1C1 stores the definition pointer
++# DSOUND
++CDirectSoundStream_Vtable  = 0x0   # OK  the stream constructor 0x4B03D8 stores DSound_StreamVtable 0x61A534 at [ESI - 4]
++CDirectSoundStream_Vtable2 = 0x4   # OK  0x4B03DF stores DSound_StreamVtable2 0x61A528 at [ESI]; 0x4B16F0 does the same
++EffectsImage_Skip0         = 0x804 # OK  0x4B2B25 adds this dword count (DownloadEffectsImage 0x4B07C0 -> 0x4AFF01 -> 0x4AFD4B -> 0x4B2D79)
++EffectsImage_Skip1         = 0x80C # OK  0x4B2B1F loads this dword count
++EffectsImage_Desc          = 0x818 # OK  0x4B2B2E: descriptor at image + 0x818 + (Skip0 + Skip1) * 4
++# XPP
++XPP_Current                = 0x0   # OK  XGetDevices 0x5194D3 returns it
++XPP_Changed                = 0x4   # OK  XGetDevices 0x5194D5 clears it, XGetDeviceChanges 0x5194F3 tests it
++XPP_Previous               = 0x8   # OK  XGetDevices 0x5194DB copies Current into it
++
++# Candidates, not yet proven:
++#   0x49EE80 CDevice_KickOff (D3D_SetFence calls it with ECX = device unless flag 2)
++#   0x49F340 the push buffer MakeSpace (called when [dev] >= [dev+4])

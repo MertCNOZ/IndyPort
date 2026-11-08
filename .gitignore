@@ -32,3 +32,6 @@ settings.toml
 
 # Ghidra project (analysis database, derived from the game)
 /ghidra/
+
+# python bytecode
+__pycache__/
