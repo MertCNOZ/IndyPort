@@ -3,6 +3,7 @@
 // land at once and leave the count at 1 with no owner, which hung the game on a Loading screen. One modern core is
 // many times the console's 733 MHz; the renderer, audio and other host threads keep the rest of the CPU.
 #include <cstdint>
+#include <cstdlib>
 
 #include "core/log.h"
 #include "kernel/kernel.h"
@@ -14,6 +15,10 @@
 namespace game {
 
 void PinGuestThreads() {
+    if (std::getenv("INDY_NOPIN")) {
+        LOGR("cpu: game threads not pinned (INDY_NOPIN)");
+        return;
+    }
     DWORD_PTR process = 0, system = 0;
     if (!GetProcessAffinityMask(GetCurrentProcess(), &process, &system) || !process) return;
     // the second CPU the process may use, else the first: CPU 0 takes most of the system's interrupts

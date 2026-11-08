@@ -11,8 +11,116 @@ index e36f7ac..9a07980 100644
          }
  }
  
+diff --git a/runtime/audio/xaudio2.cpp b/runtime/audio/xaudio2.cpp
+index f95ebf5..c00e839 100644
+--- a/runtime/audio/xaudio2.cpp
++++ b/runtime/audio/xaudio2.cpp
+@@ -8,6 +8,9 @@
+ #include <windows.h>
+ #include <xaudio2.h>
+ 
++#include <cstdio>
++#include <cstdlib>
++#include <string>
+ #include <thread>
+ #include <vector>
+ 
+@@ -16,6 +19,43 @@
+ 
+ namespace audio {
+ 
++namespace {
++// XBE_AUDIO_DUMP=<file.wav>: everything sent to the speakers, 48 kHz stereo float, for checking the sound offline
++struct Dump {
++    FILE* f = nullptr;
++    uint32_t bytes = 0;
++    Dump() {
++        if (const char* path = std::getenv("XBE_AUDIO_DUMP")) {
++            // one file a process: a title that relaunches itself does not overwrite its predecessor's
++            std::string name = path;
++            size_t dot = name.rfind('.');
++            name.insert(dot == std::string::npos ? name.size() : dot, "-" + std::to_string(GetCurrentProcessId()));
++            f = std::fopen(name.c_str(), "wb");
++            if (f) Header();
++            LOGR("audio: recording the output to %s", name.c_str());
++        }
++    }
++    void Header() {
++        auto u32 = [&](uint32_t v) { std::fwrite(&v, 4, 1, f); };
++        auto u16 = [&](uint16_t v) { std::fwrite(&v, 2, 1, f); };
++        std::fseek(f, 0, SEEK_SET);
++        std::fwrite("RIFF", 1, 4, f), u32(36 + bytes), std::fwrite("WAVEfmt ", 1, 8, f), u32(16);
++        u16(3), u16(2), u32(kRate), u32(kRate * 8), u16(8), u16(32);
++        std::fwrite("data", 1, 4, f), u32(bytes);
++        std::fseek(f, 0, SEEK_END);
++    }
++    void Write(const float* b, uint32_t frames) {
++        if (!f) return;
++        std::fwrite(b, 8, frames, f);
++        bytes += frames * 8;
++        if (bytes % (kRate * 8) < frames * 8) {  // about once a second the sizes are right, the file stays readable
++            Header();
++            std::fflush(f);
++        }
++    }
++};
++}  // namespace
++
+ void StartOutput(std::function<void(float*, uint32_t)> render) {
+     std::thread([render] {
+         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+@@ -44,13 +84,14 @@ void StartOutput(std::function<void(float*, uint32_t)> render) {
+         constexpr uint32_t kSlots = kMaxQueued + 1;
+         std::vector<float> bufs(kSlots * kFrames * 2);
+         uint32_t depth = kMinQueued;
++        Dump dump;
+         for (uint32_t n = 0;;) {
+             XAUDIO2_VOICE_STATE st;
+             voice->GetState(&st, XAUDIO2_VOICE_NOSAMPLESPLAYED);
+             // a starved voice crackles: queue one buffer more each time, up to kMaxQueued
+             if (n && !st.BuffersQueued && depth < kMaxQueued) {
+                 depth++;
+-                LOGI("audio: output starved, queueing %u ms", depth * 10);
++                LOGR("audio: output starved, queueing %u ms", depth * 10);
+             }
+             if (st.BuffersQueued >= depth) {
+                 Sleep(2);
+@@ -58,6 +99,7 @@ void StartOutput(std::function<void(float*, uint32_t)> render) {
+             }
+             float* b = &bufs[(n % kSlots) * kFrames * 2];
+             render(b, kFrames);
++            dump.Write(b, kFrames);
+             XAUDIO2_BUFFER xb{};
+             xb.AudioBytes = kFrames * 8;
+             xb.pAudioData = reinterpret_cast<const BYTE*>(b);
+diff --git a/runtime/core/log.cpp b/runtime/core/log.cpp
+index 7e6507d..b72ef2d 100644
+--- a/runtime/core/log.cpp
++++ b/runtime/core/log.cpp
+@@ -1,3 +1,4 @@
++#include <cstring>
+ #include "core/log.h"
+ 
+ #include <algorithm>
+@@ -52,7 +53,15 @@ void Init(const std::string& dir, const std::string& prefix, bool append) {
+ const std::string& Path() { return g_path; }
+ 
+ void Write(Level lv, const char* fmt, ...) {
+-    if (!kVerbose && lv < Level::Error) return;
++    // XBE_LOG=info (or warn) also writes those lines in a release build, for debugging a player's problem
++    static const Level floor = [] {
++        const char* v = std::getenv("XBE_LOG");
++        if (!v) return Level::Error;
++        if (!std::strcmp(v, "info")) return Level::Info;
++        if (!std::strcmp(v, "warn")) return Level::Warn;
++        return Level::Error;
++    }();
++    if (!kVerbose && lv < floor) return;
+     char msg[4096];
+     va_list ap;
+     va_start(ap, fmt);
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index 3f9d4e7..21596ea 100644
+index 3f9d4e7..533efaa 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -2527,9 +2527,63 @@ void D3D12Backend::CaptureDraw(const State& s, uint32_t prim, uint32_t count, co
@@ -80,11 +188,55 @@ index 3f9d4e7..21596ea 100644
      fputc('\n', cap_);
  }
  
+@@ -3324,12 +3378,12 @@ void LogPerf() {
+         Perf& p = g_perf;
+         double n = double(perf_frames);
+         double host = p.draw + p.clear + p.copy + p.present + p.sync;
+-        LOGI("perf: %.1f fps %.2f ms/frame | host %.2f (draw %.2f: assemble %.2f bind %.2f [check %.2f, upload %.2f] "
++        LOGR("perf: %.1f fps %.2f ms/frame | host %.2f (draw %.2f: assemble %.2f bind %.2f [check %.2f, upload %.2f] "
+              "compile %.2f; clear %.2f copy %.2f sync %.2f present %.2f [swap %.2f wait %.2f]) other %.2f",
+              n * 1000.0 / el, el / n, host / n, p.draw / n, p.assemble / n, p.bind / n, p.sig / n, p.texup / n,
+              p.compile / n, p.clear / n, p.copy / n, p.sync / n, p.present / n, p.swap / n, p.wait / n,
+              (el - host) / n);
+-        LOGI("perf: title thread per frame: recording %.2f ms, waiting %.2f ms (%.1f waits: read-back %.2f "
++        LOGR("perf: title thread per frame: recording %.2f ms, waiting %.2f ms (%.1f waits: read-back %.2f "
+              "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
+              "%.1f NOOVERWRITE",
+              g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
+@@ -3338,7 +3392,7 @@ void LogPerf() {
+              g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
+              g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
+              g_perf_sync_late.exchange(0) / n);
+-        LOGI("perf: per frame %.0f draws (%.0f raw) %.0fk verts %.1f MB upload %.1f overflow | %.0f checks %.2f MB "
++        LOGR("perf: per frame %.0f draws (%.0f raw) %.0fk verts %.1f MB upload %.1f overflow | %.0f checks %.2f MB "
+              "hashed | %.1f tex uploads %.2f MB, %.1f new tex, %.1f new targets, %.1f target uploads, %.1f shrinks, "
+              "%.1f read-backs %.1f late | %llu shaders %llu psos this second",
+              p.draws / n, p.raw / n, p.verts / n / 1000.0, p.upload / n / 1048576.0, p.overflow / n, p.sigs / n,
 diff --git a/runtime/kernel/kernel.h b/runtime/kernel/kernel.h
-index 163ea09..50a3161 100644
+index 163ea09..95751a7 100644
 --- a/runtime/kernel/kernel.h
 +++ b/runtime/kernel/kernel.h
-@@ -211,6 +211,11 @@ const std::string& KeptPicture();
+@@ -154,6 +154,8 @@ struct Thread : Object {
+     uint32_t kpcr = 0, ethread = 0, stack_top = 0, stack_size = 0, tls = 0;
+     uint32_t exit_code = 0;
+     int priority = 0;
++    int host_priority = 0;  // the Windows priority the guest's asks for (THREAD_PRIORITY_*), see SetGuestPriority
++    void* host = nullptr;   // its Windows thread, once it runs
+     std::atomic<int> suspend{0};
+     std::mutex apc_lock;
+     std::deque<std::array<uint32_t, 4>> apcs;  // routine, arg1, arg2, arg3
+@@ -166,6 +168,10 @@ using ThreadRef = std::shared_ptr<Thread>;
+ Thread* Current();
+ ThreadRef CurrentRef();
+ void StartHostThread(const char* name, std::function<void(X86Context&)> fn);
++// a guest thread's priority on its Windows thread: base is KeSetBasePriorityThread's increment (THREAD_PRIORITY_*,
++// 15 and -15 saturate), else KeSetPriorityThread's absolute 0..31 (8 normal, 16 and up real time). On one core
++// (g_guest_affinity) the Xbox scheduler's order matters: a high priority thread must run as soon as it is ready.
++void SetGuestPriority(Thread& t, int priority, bool base);
+ void RunDpcs(X86Context& ctx);
+ void InitKernelData();
+ void LogGuestStack(X86Context& ctx, int words);
+@@ -211,6 +217,11 @@ const std::string& KeptPicture();
  // event and the old instance, waiting in Relaunch with its window still up, exits.
  std::wstring HandoverEvent(unsigned long process);
  inline std::atomic<bool> g_relaunching{false};
@@ -97,7 +249,7 @@ index 163ea09..50a3161 100644
  using KernelFn = void (*)(X86Context& ctx, uint8_t* base);
  void RegisterExport(uint32_t ordinal, const char* name, KernelFn fn);
 diff --git a/runtime/kernel/threads.cpp b/runtime/kernel/threads.cpp
-index a8acfd6..be194bb 100644
+index a8acfd6..8d9b893 100644
 --- a/runtime/kernel/threads.cpp
 +++ b/runtime/kernel/threads.cpp
 @@ -101,6 +101,7 @@ void Spawn(std::function<void()> fn) {
@@ -108,6 +260,156 @@ index a8acfd6..be194bb 100644
          (*g)();
          return 0;
      };
+@@ -150,10 +151,40 @@ ThreadRef CreateThread(uint32_t stack_size, uint32_t tls_size, uint32_t system_r
+     return t;
+ }
+ 
++namespace {
++int HostPriority(int priority, bool base) {
++    if (base) {
++        if (priority >= 15) return THREAD_PRIORITY_TIME_CRITICAL;
++        if (priority <= -15) return THREAD_PRIORITY_IDLE;
++        return std::clamp(priority, -2, 2);
++    }
++    if (priority >= 16) return THREAD_PRIORITY_TIME_CRITICAL;
++    if (priority <= 1) return THREAD_PRIORITY_IDLE;
++    return std::clamp(priority - 8, -2, 2);
++}
++
++// the calling thread's own handle, usable from other threads
++void* OwnHandle() {
++    HANDLE h = nullptr;
++    ::DuplicateHandle(::GetCurrentProcess(), ::GetCurrentThread(), ::GetCurrentProcess(), &h, 0, FALSE,
++                      DUPLICATE_SAME_ACCESS);
++    return h;
++}
++}  // namespace
++
++void SetGuestPriority(Thread& t, int priority, bool base) {
++    t.priority = priority;
++    t.host_priority = HostPriority(priority, base);
++    LOGI("thread %X priority %d%s -> %d", t.id, priority, base ? " (base)" : "", t.host_priority);
++    if (t.host) ::SetThreadPriority(static_cast<HANDLE>(t.host), t.host_priority);
++}
++
+ void StartThread(ThreadRef t) {
+     Register(t);
+     Spawn([t] {
+         t_current = t;
++        t->host = OwnHandle();
++        if (t->host_priority) ::SetThreadPriority(::GetCurrentThread(), t->host_priority);
+         char name[32];
+         std::snprintf(name, sizeof(name), "guest %X", t->id);
+         NameHostThread(name);
+@@ -191,6 +222,9 @@ void StartHostThread(const char* name, std::function<void(X86Context&)> fn) {
+     std::string n = name;
+     Spawn([t, fn, n] {
+         t_current = t;
++        // the runtime's stand-ins for interrupts and DPCs (vertical blank, timers, sound callbacks) run ahead of
++        // every guest thread, as on the Xbox: on one core they would otherwise wait for a busy game thread's time slice
++        ::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+         NameHostThread(n.c_str());
+         X86Context ctx;
+         InitContext(*t, ctx);
+diff --git a/runtime/kernel/xboxkrnl.cpp b/runtime/kernel/xboxkrnl.cpp
+index 3b24d51..a5ac987 100644
+--- a/runtime/kernel/xboxkrnl.cpp
++++ b/runtime/kernel/xboxkrnl.cpp
+@@ -1,3 +1,4 @@
++#include <map>
+ #include <algorithm>
+ #include <cctype>
+ #include <chrono>
+@@ -261,6 +262,13 @@ KERNEL_EXPORT(99, KeDelayExecutionThread, 3) {
+     Thread* t = Current();
+     if (alertable && t && RunApcs(*t)) return kUserApc;
+     int64_t deadline = ToDeadline(interval);
++    if (std::getenv("XBE_TRACE_DELAY")) {
++        static std::atomic<int> logged{0};
++        if (interval == -150000 && logged++ < 4) {
++            LOGR("delay %lld thread %X", (long long)interval, t ? t->id : 0);
++            LogGuestStack(ctx, 48);
++        }
++    }
+     auto now = [] {
+         return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+     };
+@@ -634,19 +642,43 @@ KERNEL_EXPORT(230, NtSignalAndWaitForSingleObjectEx, 5) {
+     return Wait({w}, false, TimeoutArg(a[4]), a[3] & 0xFF);
+ }
+ 
++// XBE_TRACE_WAIT: each thread's first wait from each place, with its guest stack, and every 5 s the counts
++static void TraceWait(X86Context& ctx, const char* what, int64_t timeout) {
++    static const bool on = std::getenv("XBE_TRACE_WAIT") != nullptr;
++    if (!on) return;
++    static std::mutex m;
++    static std::map<std::pair<uint32_t, uint32_t>, uint64_t> seen;
++    static auto last = std::chrono::steady_clock::now();
++    Thread* t = Current();
++    uint32_t id = t ? t->id : 0, from = R32(ctx.esp + 0x20);
++    std::lock_guard<std::mutex> lock(m);
++    if (seen[{id, from}]++ == 0) {
++        LOGR("wait: %s thread %X from %08X timeout %lld", what, id, from, (long long)timeout);
++        LogGuestStack(ctx, 40);
++    }
++    if (std::chrono::steady_clock::now() - last > std::chrono::seconds(5)) {
++        last = std::chrono::steady_clock::now();
++        for (auto& [k, n] : seen) LOGR("wait: thread %X from %08X x%llu", k.first, k.second, (unsigned long long)n);
++        for (auto& [k, n] : seen) n = 1;
++    }
++}
++
+ KERNEL_EXPORT(233, NtWaitForSingleObject, 3) {
++    TraceWait(ctx, "NtWaitForSingleObject", a[2] ? int64_t(R64(a[2])) : -1);
+     ObjectRef o = FromHandle(a[0]);
+     if (!o) return kInvalidHandle;
+     return Wait({o}, false, TimeoutArg(a[2]), a[1] & 0xFF);
+ }
+ 
+ KERNEL_EXPORT(234, NtWaitForSingleObjectEx, 4) {
++    TraceWait(ctx, "NtWaitForSingleObjectEx", a[3] ? int64_t(R64(a[3])) : -1);
+     ObjectRef o = FromHandle(a[0]);
+     if (!o) return kInvalidHandle;
+     return Wait({o}, false, TimeoutArg(a[3]), a[2] & 0xFF);
+ }
+ 
+ KERNEL_EXPORT(235, NtWaitForMultipleObjectsEx, 6) {
++    TraceWait(ctx, "NtWaitForMultipleObjectsEx", a[5] ? int64_t(R64(a[5])) : -1);
+     std::vector<ObjectRef> objs;
+     for (uint32_t i = 0; i < a[0]; i++) {
+         ObjectRef o = FromHandle(R32(a[1] + i * 4));
+@@ -657,11 +689,13 @@ KERNEL_EXPORT(235, NtWaitForMultipleObjectsEx, 6) {
+ }
+ 
+ KERNEL_EXPORT(159, KeWaitForSingleObject, 5) {
++    TraceWait(ctx, "KeWaitForSingleObject", a[4] ? int64_t(R64(a[4])) : -1);
+     ObjectRef o = FromPointer(a[0]);
+     return Wait({o}, false, TimeoutArg(a[4]), a[3] & 0xFF);
+ }
+ 
+ KERNEL_EXPORT(158, KeWaitForMultipleObjects, 8) {
++    TraceWait(ctx, "KeWaitForMultipleObjects", a[6] ? int64_t(R64(a[6])) : -1);
+     std::vector<ObjectRef> objs;
+     for (uint32_t i = 0; i < a[0]; i++) objs.push_back(FromPointer(R32(a[1] + i * 4)));
+     return Wait(objs, a[2] == 0, TimeoutArg(a[6]), a[5] & 0xFF);
+@@ -867,7 +901,7 @@ KERNEL_EXPORT(148, KeSetPriorityThread, 2) {
+     Thread* t = ThreadAt(a[0]);
+     if (!t) return 0;
+     int old = t->priority;
+-    t->priority = int32_t(a[1]);
++    SetGuestPriority(*t, int32_t(a[1]), false);
+     return uint32_t(old);
+ }
+ KERNEL_EXPORT(124, KeQueryBasePriorityThread, 1) {
+@@ -881,7 +915,7 @@ KERNEL_EXPORT(143, KeSetBasePriorityThread, 2) {
+     if (!o || o->type != ObjType::Thread) return 0;
+     auto& t = static_cast<Thread&>(*o);
+     int old = t.priority;
+-    t.priority = int32_t(a[1]);
++    SetGuestPriority(t, int32_t(a[1]), true);
+     return uint32_t(old);
+ }
+ 
 diff --git a/runtime/xdk/d3d8.cpp b/runtime/xdk/d3d8.cpp
 index a6e65d6..dc06dee 100644
 --- a/runtime/xdk/d3d8.cpp

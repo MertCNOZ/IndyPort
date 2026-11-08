@@ -10,6 +10,7 @@
 #include <commdlg.h>
 #include <d3d11.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -310,25 +311,62 @@ void Log(const char* fmt, ...) {
 
 std::atomic<bool> g_game_running{false};
 
+// an IndyET.exe already running (started by hand, or a relaunch the launcher did not see)
+bool GameAlreadyRunning() {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W e{sizeof(e)};
+    bool found = false;
+    for (BOOL ok = Process32FirstW(snap, &e); ok && !found; ok = Process32NextW(snap, &e))
+        found = _wcsicmp(e.szExeFile, kGameExe) == 0;
+    CloseHandle(snap);
+    return found;
+}
+
+// The game runs in a job: it restarts itself as a new process when it launches an Xbox image (the old one exits once
+// the new one shows its first frames), and the game code compiler runs as child processes. The game has ended only
+// when the job has no process left.
 void Play(HWND window) {
+    if (g_game_running || GameAlreadyRunning()) {
+        Log("play: the game is already running");
+        return;
+    }
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    HANDLE port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 1);
+    JOBOBJECT_ASSOCIATE_COMPLETION_PORT assoc{job, port};
+    SetInformationJobObject(job, JobObjectAssociateCompletionPortInformation, &assoc, sizeof(assoc));
+
     STARTUPINFOW si{sizeof(si)};
     PROCESS_INFORMATION pi{};
     fs::path exe = ExeDir() / kGameExe;
     std::wstring cmd = L"\"" + exe.wstring() + L"\"";
-    if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, ExeDir().c_str(), &si, &pi)) {
+    if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED, nullptr, ExeDir().c_str(),
+                        &si, &pi)) {
         Log("play: cannot start %s (error %lu)", Utf8(exe.wstring()).c_str(), GetLastError());
+        CloseHandle(job);
+        CloseHandle(port);
         return;
     }
-    Log("play: started the game, process %lu", pi.dwProcessId);
+    if (!AssignProcessToJobObject(job, pi.hProcess)) Log("play: no job for the game (error %lu)", GetLastError());
+    ResumeThread(pi.hThread);
     CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    Log("play: started the game, process %lu", pi.dwProcessId);
     g_game_running = true;
     ShowWindow(window, SW_MINIMIZE);
-    std::thread([h = pi.hProcess, window] {
-        WaitForSingleObject(h, INFINITE);
-        DWORD code = 0;
-        GetExitCodeProcess(h, &code);
-        Log("play: the game exited with %lu", code);
-        CloseHandle(h);
+    std::thread([job, port, window] {
+        DWORD msg;
+        ULONG_PTR key;
+        LPOVERLAPPED data;
+        while (GetQueuedCompletionStatus(port, &msg, &key, &data, INFINITE)) {
+            if (msg == JOB_OBJECT_MSG_NEW_PROCESS) Log("play: process %lu started", DWORD(uintptr_t(data)));
+            if (msg == JOB_OBJECT_MSG_EXIT_PROCESS || msg == JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS)
+                Log("play: process %lu exited", DWORD(uintptr_t(data)));
+            if (msg == JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO) break;
+        }
+        Log("play: the game has ended");
+        CloseHandle(job);
+        CloseHandle(port);
         g_game_running = false;
         ShowWindow(window, SW_RESTORE);
         SetForegroundWindow(window);
@@ -954,6 +992,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             CreateTarget();
         }
 
+        // the controller only moves the launcher while it is the window in front (never while the game plays)
+        if (GetForegroundWindow() == hwnd && !g_game_running) io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+        else io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
