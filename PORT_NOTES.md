@@ -237,3 +237,19 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
 - Settings sidebar: Graphics (writes settings.toml beside the exe, keeps unknown keys), Controls, Saves (SaveMeta.xbx
   names, open folder, backup to "save backups"), About. LB/RB pages, B/Escape back. launcher.log records Play.
 - Testing: INDY_LAUNCHER_PAGE=1..4 opens a page; tools/postkey.ps1 posts keys; tools/winshot.ps1 <png> Launcher.
+
+## Frame rate, sound, relaunch (2026-11-08)
+- 30 FPS came from the game's own limiter: vars.cfg (signed) fpsLimit=30, frame function 0x9A4C0 spins on rdtsc for
+  1000/fpsLimit ms; src/common/fps.cpp sets [0x6B93A8]+0x8C from fps_cap. Simulation steps at a fixed 1/60 s
+  (0x17D50), walking speed checked equal at 30 and 60.
+- The vertical blank ran at ~31 Hz on the pinned core: the runtime's host threads (vblank, DPC, dsound) now run at
+  time critical priority.
+- Gameplay sound was silent: every world sound is a 3D buffer with min distance 0.1, and the game turns distance
+  rolloff off (IDirectSound_SetRolloffFactor 0) to attenuate by volume itself; the runtime ignored it. Now honoured.
+  The DSOUND functions without addresses are not used by this game (0x4B07E7 is IDirectSound_GetTime).
+- Starting a level from the menu makes the game relaunch itself as a new process; the launcher runs the game in a
+  job and waits for all of it.
+- Load a save: main menu Load Game (below New Game) -> slot -> chapter -> mission returns to the menu on Start ->
+  Start loads the level (tools/ap_to_level.sh).
+- Debug switches: XBE_LOG=info|warn, XBE_AUDIO_DUMP=<wav>, XBE_TRACE_DSOUND, XBE_TRACE_WAIT, XBE_TRACE_DELAY,
+  XBE_PERF, INDY_FPS=1; tools/sample_thread.ps1, tools/audio_check.py.

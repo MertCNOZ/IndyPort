@@ -568,6 +568,94 @@ index a6e65d6..dc06dee 100644
      Walk(Dev(kDevPush));
      DrawUp(a[0], a[1], HostPtr(a[3]), a[4], static_cast<const uint16_t*>(HostPtr(a[2])));
      return 0;
+diff --git a/runtime/xdk/dsound.cpp b/runtime/xdk/dsound.cpp
+index d48cc44..18e3d95 100644
+--- a/runtime/xdk/dsound.cpp
++++ b/runtime/xdk/dsound.cpp
+@@ -402,10 +402,18 @@ void ShareCentre(Place& at) {
+     at.front *= 1 - 0.5f * both * both;
+ }
+ 
+-// distance attenuation, 1.0 inside the min distance: min / distance, or the voice's rolloff curve
++// IDirectSound_SetRolloffFactor: the listener's scale of the distance rolloff, 1 by default, 0 turns it off (a title
++// that attenuates by volume itself)
++float g_rolloff = 1;
++
++// distance attenuation, 1.0 inside the min distance: DirectSound's min / (min + rolloff (distance - min)), or the
++// voice's rolloff curve
+ float Attenuation(const Voice& v, float dist) {
+     if (dist <= v.min_dist) return 1;
+-    if (v.curve.empty()) return v.min_dist / std::min(dist, v.max_dist);
++    if (v.curve.empty()) {
++        float d = std::min(dist, v.max_dist);
++        return v.min_dist / (v.min_dist + g_rolloff * (d - v.min_dist));
++    }
+     if (v.max_dist <= v.min_dist) return 1;
+     // points spread evenly from min to max distance, 1.0 at min
+     float at = (std::min(dist, v.max_dist) - v.min_dist) / (v.max_dist - v.min_dist) * v.curve.size();
+@@ -619,6 +627,38 @@ void MixVoice(Voice& v, float* bins, uint32_t frames) {
+     v.itd = itd;
+ }
+ 
++int64_t NowMs();
++
++// XBE_TRACE_DSOUND: every 2 s the voices that play, with their levels, place and loudest bin gain
++void TraceVoices() {
++    static const bool on = std::getenv("XBE_TRACE_DSOUND") != nullptr;
++    if (!on) return;
++    static int64_t next = 0;
++    int64_t now = NowMs();
++    if (now < next) return;
++    next = now + 2000;
++    int n = 0;
++    for (auto& [obj, v] : g_voices) {
++        bool live = !(v.paused || v.sync || (!v.stream && !v.playing));
++        if (!live) continue;
++        Place at = Locate(v);
++        Gains g = Levels(v, at);
++        float best = 0;
++        int best_bin = -1;
++        for (auto& row : g.bin)
++            for (int b = 0; b < int(kBins); b++)
++                if (row[b] > best) best = row[b], best_bin = b;
++        LOGR("dsound: %08X %s ch %u %u Hz tag %X vol %.3f head %.3f bins %u%s pos %.1f %.1f %.1f dist %.1f..%.1f att %.3f "
++             "-> bin %d gain %.4f%s",
++             obj, v.stream ? "stream" : "buffer", v.channels, v.freq ? v.freq : v.rate, v.tag, v.volume, v.headroom, v.nbins,
++             v.is3d ? " 3d" : "", v.p[0], v.p[1], v.p[2], v.min_dist, v.max_dist, at.att, best_bin, best,
++             v.stream ? (v.packets.empty() ? " no packets" : "") : "");
++        n++;
++    }
++    LOGR("dsound: %d voices playing of %zu, listener %.1f %.1f %.1f", n, g_voices.size(), g_listener[0], g_listener[1],
++         g_listener[2]);
++}
++
+ void Render(float* out, uint32_t frames) {
+     static std::vector<float> bins;  // the output thread alone renders
+     bins.assign(size_t(frames) * kBins, 0.0f);
+@@ -628,6 +668,7 @@ void Render(float* out, uint32_t frames) {
+         MixVoice(v, bins.data(), frames);
+     }
+     if (dsp::Loaded()) dsp::Run(bins.data(), frames);
++    TraceVoices();
+     for (uint32_t i = 0; i < frames; i++) {
+         const float* b = &bins[size_t(i) * kBins];
+         out[i * 2] = std::clamp(b[kFrontLeft] + kFold * (b[kCentre] + b[kBackLeft]), -1.0f, 1.0f);
+@@ -824,7 +865,14 @@ HLE_STDCALL(IDirectSound_SetMixBinHeadroom, 3) {
+ }
+ HLE_STDCALL(IDirectSound_CommitDeferredSettings, 1) { return 0; }
+ HLE_STDCALL(IDirectSound_SetDopplerFactor, 3) { return 0; }
+-HLE_STDCALL(IDirectSound_SetRolloffFactor, 3) { return 0; }
++// (this, factor, apply)
++HLE_STDCALL(IDirectSound_SetRolloffFactor, 3) {
++    std::lock_guard<std::recursive_mutex> lock(g_lock);
++    float f = ArgF(a, 1);
++    if (f != g_rolloff) LOGR("dsound: rolloff factor %g", f);
++    g_rolloff = std::max(f, 0.0f);
++    return 0;
++}
+ HLE_STDCALL(IDirectSound_SetDistanceFactor, 3) { return 0; }
+ HLE_STDCALL(IDirectSound_SetVelocity, 5) { return 0; }
+ // (this, DSI3DL2LISTENER, apply): room, room HF, reflections and reverb are integers
 diff --git a/xdk/5120/layout.toml b/xdk/5120/layout.toml
 new file mode 100644
 index 0000000..a3ac3d8
