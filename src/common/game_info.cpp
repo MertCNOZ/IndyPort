@@ -1,5 +1,8 @@
+#include <atomic>
+
 #include "app/app.h"
 #include "core/input.h"
+#include "core/log.h"
 
 namespace game {
 void KeyboardPad(int port, input::Pad& pad);  // keyboard.cpp
@@ -15,8 +18,11 @@ void Init() {
     StartWatch();
 }
 
-// the keyboard, then the autopilot's presses on top
+// the keyboard, then the autopilot's presses on top; a real controller plugging in or out is logged
 void Pad(int port, input::Pad& pad) {
+    static std::atomic<bool> real[4];
+    if (port >= 0 && port < 4 && real[port].exchange(pad.connected) != pad.connected)
+        LOGR("input: controller %s on port %d", pad.connected ? "connected" : "disconnected", port + 1);
     KeyboardPad(port, pad);
     AutopilotPad(port, pad);
 }
