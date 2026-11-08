@@ -1,0 +1,60 @@
+# XDK 5120 library data layouts: DRAFT. Becomes sdk/xdk/5120/layout.toml once every value is proven.
+# Evidence is from Indiana Jones and the Emperor's Tomb (USA) default.xbe, addresses as in config/game.toml.
+# 5120 sits between 4831 and 5659: the front of CDevice mostly matches 4831, some fields are 4 bytes lower,
+# and the tail is 0xC00 shorter (SwapCount 0x2C10 -> 0x2010).
+#
+# Status per value: OK = proven at the address given, TODO = still the 4831 value, unverified.
+
+# D3D8 CDevice, the device D3D_pDevice (0x4A9668) points at
+CDevice_Push              = 0x0    # OK  every D3DDevice_* compares [dev] with [dev+4], e.g. SetPixelShader 0x49B264
+CDevice_PushThreshold     = 0x4    # OK  SetPixelShader 0x49B266, calls MakeSpace 0x49F340 when full
+CDevice_BaseVertex        = 0x1C   # OK  D3DDevice_SetIndices 0x49C3C9 stores BaseVertexIndex
+CDevice_IndexBuffer       = 0x388  # OK  D3DDevice_SetIndices 0x49C39A reads the old one, 0x49C3C2 stores the new one (4831: 0x38C)
+CDevice_ZScale            = 0x510  # TODO
+CDevice_SuperSampleX      = 0x518  # TODO
+CDevice_SuperSampleY      = 0x51C  # TODO
+CDevice_Transforms        = 0x810  # OK  D3DDevice_SetTransform 0x49B7C6 LEA dev + type*64 + 0x810
+CDevice_Textures          = 0xB38  # OK  D3DDevice_SetTexture 0x49C140 reads, 0x49C179 stores [stage]
+CDevice_Palettes          = 0xB48  # OK  D3DDevice_SetPalette 0x49C2ED reads, 0x49C325 stores [stage]
+CDevice_RenderTarget      = 0x21B4 # TODO tail shifted, re-derive from GetRenderTarget2
+CDevice_Depth             = 0x21B8 # TODO tail shifted, re-derive from GetDepthStencilSurface2
+CDevice_BackBuffer        = 0x21C0 # TODO tail shifted, re-derive from GetBackBuffer2 (Swap 0x49DF5D reads a 2-entry array at +0x1524)
+CDevice_FrontBuffer       = 0x21C4 # TODO tail shifted, re-derive from GetBackBuffer2
+CDevice_SwapCount         = 0x2010 # OK  D3DDevice_Swap 0x49DF70 increments it, 0x49DFE1 returns it (4831: 0x2C10)
+CDevice_Size              = 0x2C30 # TODO re-derive from Direct3D_CreateDevice
+CDevice_Flags             = 0x8    # OK  D3DDevice_Swap 0x49DF3F tests bit 0x4000; DrawVerticesUP 0x49CB0A ors 0x800
+CDevice_Time              = 0x2C   # OK  D3D_SetFence 0x49EFE4 pushes it, 0x49F05A adds 2; SetPalette 0x49C2F8 (4831: 0x30)
+CDevice_PixelShader       = 0x36C  # OK  D3DDevice_SetPixelShader 0x49B218 reads, 0x49B228 stores the handle (4831: 0x370)
+CDevice_VertexShader      = 0x37C  # OK  D3DDevice_SetVertexShader 0x49B0A8 stores the shader object (4831: 0x380)
+CDevice_BackBufferScale   = 0x528  # TODO
+CDevice_Viewport          = 0xA90  # OK  D3DDevice_SetViewport 0x49C0CB to 0x49C0EF stores X, Y, Width, Height, MinZ, MaxZ
+CDevice_ScreenSpaceOffset = 0xAA8  # TODO
+CDevice_AutoDepth         = 0x21CC # TODO tail shifted
+CDevice_VBlankCallback    = 0x2550 # TODO tail shifted
+CDevice_VBlankEvent       = 0x2554 # TODO tail shifted
+CDevice_DisplayFlags      = 0x2574 # TODO tail shifted
+CDevice_VBlankCount       = 0x2580 # TODO tail shifted
+CDevice_Field             = 0x2590 # TODO tail shifted
+CDevice_GammaRamps        = 0x259C # TODO tail shifted
+CDevice_GammaPending      = 0x2B9C # TODO tail shifted
+
+DirtyFlags_Texture        = 0x4800 # OK  D3DDevice_SetPixelShader 0x49B236 ors it into D3D_DirtyFlags 0x4A91C8
+TextureState_Stage        = 32     # TODO
+Stream_Size               = 12     # OK  D3DDevice_SetStreamSource 0x49AC7A indexes D3D_Streams 0x4AB6A0 by n * 12
+Stream_Stride             = 0x0    # OK  D3DDevice_SetStreamSource 0x49ACC2 stores Stride
+Stream_Buffer             = 0x8    # OK  D3DDevice_SetStreamSource 0x49ACC8 stores the vertex buffer
+PixelShader_Definition    = 0x8    # OK  D3DDevice_CreatePixelShader 0x49B1C1 stores the definition pointer
+# DSOUND
+CDirectSoundStream_Vtable  = 0x0   # TODO
+CDirectSoundStream_Vtable2 = 0x4   # TODO
+EffectsImage_Skip0         = 0x804 # TODO
+EffectsImage_Skip1         = 0x80C # TODO
+EffectsImage_Desc          = 0x818 # TODO
+# XPP
+XPP_Current               = 0x0    # TODO
+XPP_Changed               = 0x4    # TODO
+XPP_Previous              = 0x8    # TODO
+
+# Candidates, not yet proven:
+#   0x49EE80 CDevice_KickOff (D3D_SetFence calls it with ECX = device unless flag 2)
+#   0x49F340 the push buffer MakeSpace (called when [dev] >= [dev+4])
