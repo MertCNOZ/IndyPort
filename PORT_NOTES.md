@@ -151,6 +151,16 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   pointer are the game's own recompiled code, so suspect a mistranslated instruction in the code that builds
   these text objects (where obj[+0x2C] is set, or the vertex stores). Next: find that writer (FindRefs on the
   object fields, DumpAt) and compare its stores with the pointer.
+- Corrected (per-frame trace `XBE_TRACE_ORIGIN=cap`, sdk debug code in d3d8.cpp, logs every d3d8 draw of a captured
+  frame): the book and menu text are D3DDevice_DrawIndexedVerticesUP draws (vs 0x104, from 0x320DB6 in
+  FUN_00320BC0), copied into the runtime's UP ring at draw time. The ring copy, its 64-byte aligned Data and the
+  indices are right; the capture's raw vertex print had not subtracted first_vertex. Reading the ring with that
+  in mind, the game's own vertex array is wrong in places: e.g. vertex 7 holds (0.7339 0.0509 474 412 0 1), a
+  record 8 bytes off, while vertex 8 is (202 260 0 1 0.5616 0.1018). So the recompiled code that fills this array
+  writes some vertices shifted. Next: find the writer of the array FUN_00320BC0 gets as vertices ([EBP+8]) and
+  check its instructions against the recompiler.
+- Earlier per-call-site traces (XBE_TRACE_UP, XBE_TRACE_ORIGIN=<vs>/q<count>) only log the first few draws per path
+  and hid this; use `XBE_TRACE_ORIGIN=cap` with a capture.
 - Ruled out: runtime address conversions (memory.cpp keeps the low bits, contiguous allocations are page aligned),
   the render thread, IsBusy/BlockOnResource (both replaced and wait correctly), vertex copy timing (the raw path
   copies at Draw).

@@ -109,7 +109,7 @@ index a8acfd6..be194bb 100644
          return 0;
      };
 diff --git a/runtime/xdk/d3d8.cpp b/runtime/xdk/d3d8.cpp
-index a6e65d6..263fee2 100644
+index a6e65d6..0cb99d7 100644
 --- a/runtime/xdk/d3d8.cpp
 +++ b/runtime/xdk/d3d8.cpp
 @@ -961,6 +961,15 @@ HLE_STDCALL(D3DDevice_GetVertexShaderFunction, 3) {
@@ -128,6 +128,106 @@ index a6e65d6..263fee2 100644
      g_state.vs_handle = h;
      g_state.vs = nullptr;
      if (h & 1) {
+@@ -1209,19 +1218,75 @@ HLE_STDCALL(D3DDevice_SetPixelShaderConstant, 3) {
+ 
+ // drawing
+ 
++// XBE_TRACE_ORIGIN=<hex vertex shader>: which draw path issues triangle lists with that shader (the immediate one sets
++// the low bit), with the guest stack, 4 times per path. Debugging aid.
++void TraceOrigin(const char* path, uint32_t prim, uint32_t count) {
++    // "q<count>": quad lists of that many vertices whatever the shader
++    static const char* env = std::getenv("XBE_TRACE_ORIGIN");
++    static const bool by_count = env && env[0] == 'q';
++    static const uint32_t want = env ? uint32_t(std::strtoul(env + (by_count ? 1 : 0), nullptr, by_count ? 10 : 16)) : 0u;
++    static std::map<std::string, int> seen;
++    // "cap": every draw from a capture request (F3, autopilot capture) for the next 3000, numbered
++    static const bool cap = env && std::string(env) == "cap";
++    static int cap_left = 0, cap_n = 0;
++    if (cap) {
++        if (gpu::g_capture && !cap_left) cap_left = 3000, cap_n = 0;
++        if (!cap_left) return;
++        cap_left--;
++        uint32_t vb = g_state.streams[0].vb;
++        LOGR("origin %04d: %s prim %u count %u vs %X stream0 %08X data %08X stride %u", cap_n++, path, prim, count,
++             g_state.vs_handle, vb, vb ? R32(vb + 4) : 0, g_state.streams[0].stride);
++        return;
++    }
++    if (!want) return;
++    if (by_count ? (prim != 8 || count != want) : ((g_state.vs_handle & ~1u) != want || (prim != 5 && prim != 8))) return;
++    if (seen[path]++ >= 4) return;
++    LOGR("origin: %s prim %u count %u vs %X", path, prim, count, g_state.vs_handle);
++    if (kernel::Current()) kernel::LogGuestStack(kernel::CurrentContext(), 128);
++}
++
++void TraceDraw(X86Context& ctx, const char* what, uint32_t vertices, uint32_t stride, uint32_t prim = 0, uint32_t count = 0);
++
+ HLE_STDCALL(D3DDevice_DrawVertices, 3) {
+     std::lock_guard<std::recursive_mutex> lock(g_lock);
++    if (uint32_t vb = g_state.streams[0].vb)
++        TraceDraw(ctx, "DrawVertices", mem::VirtualFromPhysical(R32(vb + 4)), g_state.streams[0].stride, a[0], a[2]);
+     Walk(Dev(kDevPush));  // a visibility test begun since the last draw counts this one
+     SyncDeferred();
++    TraceOrigin("DrawVertices", a[0], a[2]);
+     if (g_backend) g_backend->Draw(g_state, a[0], a[1], a[2], nullptr);
+     return 0;
+ }
+ 
++// XBE_TRACE_UP=<hex vertex shader>: for draws with that shader, log the vertex pointer, the bytes around it and the
++// guest stack, twice per kind of draw and call site. Debugging aid.
++void TraceDraw(X86Context& ctx, const char* what, uint32_t vertices, uint32_t stride, uint32_t prim, uint32_t count) {
++    // "all": every shader
++    static const char* env = std::getenv("XBE_TRACE_UP");
++    static const bool all = env && std::string(env) == "all";
++    static const uint32_t trace = env && !all ? uint32_t(std::strtoul(env, nullptr, 16)) : 0u;
++    static std::map<std::pair<std::string, uint32_t>, int> seen;  // twice per kind of draw and call site
++    if (!env || (!all && g_state.vs_handle != trace) || seen[{what, R32(ctx.esp)}]++ >= 2) return;
++    LOGR("trace: %s prim %u count %u vs %X vertices %08X stride %u from %08X", what, prim, count, g_state.vs_handle,
++         vertices, stride, R32(ctx.esp));
++    if (all) return;
++    for (int row = -2; row < 6 && vertices; row++) {
++        uint32_t p = vertices + row * 8;
++        float f[2];
++        std::memcpy(f, HostPtr(p), 8);
++        LOGR("trace:   %08X %+4d  %08X %08X  %g %g", p, row * 8, R32(p), R32(p + 4), f[0], f[1]);
++    }
++    kernel::LogGuestStack(ctx, 256);
++}
++
+ HLE_STDCALL(D3DDevice_DrawIndexedVertices, 3) {
+     std::lock_guard<std::recursive_mutex> lock(g_lock);
+     Walk(Dev(kDevPush));
+     SyncDeferred();
+     const uint8_t* indices = a[2] ? static_cast<const uint8_t*>(HostPtr(a[2])) : nullptr;
++    if (uint32_t vb = g_state.streams[0].vb)
++        TraceDraw(ctx, "DrawIndexedVertices", mem::VirtualFromPhysical(R32(vb + 4)), g_state.streams[0].stride, a[0], a[1]);
++    TraceOrigin("DrawIndexedVertices", a[0], a[1]);
+     if (g_backend) g_backend->Draw(g_state, a[0], 0, a[1], indices);
+     return 0;
+ }
+@@ -1261,6 +1326,7 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
+     uint32_t used = indices ? *std::max_element(indices, indices + count) + 1u : count;
+     auto stream = g_state.streams[0];
+     g_state.streams[0] = {UpVertices(vertices, used * stride), stride};
++    TraceOrigin(indices ? "DrawUp indexed" : "DrawUp", prim, count);
+     g_backend->Draw(g_state, prim, 0, count, reinterpret_cast<const uint8_t*>(indices));
+     g_state.streams[0] = stream;
+ }
+@@ -1425,6 +1491,7 @@ void Walk(uint32_t end) {
+ 
+ HLE_STDCALL(D3DDevice_DrawVerticesUP, 4) {
+     std::lock_guard<std::recursive_mutex> lock(g_lock);
++    TraceDraw(ctx, "DrawVerticesUP", a[2], a[3], a[0], a[1]);
+     Walk(Dev(kDevPush));
+     DrawUp(a[0], a[1], HostPtr(a[2]), a[3]);
+     return 0;
+@@ -1432,6 +1499,7 @@ HLE_STDCALL(D3DDevice_DrawVerticesUP, 4) {
+ // (prim, index count, 16 bit indices, vertices, stride)
+ HLE_STDCALL(D3DDevice_DrawIndexedVerticesUP, 5) {
+     std::lock_guard<std::recursive_mutex> lock(g_lock);
++    TraceDraw(ctx, "DrawIndexedVerticesUP", a[3], a[4], a[0], a[1]);
+     Walk(Dev(kDevPush));
+     DrawUp(a[0], a[1], HostPtr(a[3]), a[4], static_cast<const uint16_t*>(HostPtr(a[2])));
+     return 0;
 diff --git a/xdk/5120/layout.toml b/xdk/5120/layout.toml
 new file mode 100644
 index 0000000..a3ac3d8

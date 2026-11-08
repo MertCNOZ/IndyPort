@@ -13,3 +13,5 @@ git -C sdk apply ../sdk-patches/0001-xdk5120-layout-guest-affinity-f3-depth.patc
 - `runtime/gpu/d3d12.cpp`: frame captures also list small and XYZRHW draws' vertices as read (index + base vertex),
   the stream 0 header, and save the guest memory around XYZRHW buffers (vb_*.bin). Debugging aid.
 - `runtime/xdk/d3d8.cpp`: `XBE_TRACE_VS=<hex>` logs who sets that vertex shader. Debugging aid.
+- `runtime/xdk/d3d8.cpp`: `XBE_TRACE_UP`, `XBE_TRACE_ORIGIN` (`cap`: every draw of a captured frame) trace draws with the guest
+  stack. Debugging aid.
