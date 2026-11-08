@@ -286,5 +286,11 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   cubictap() 16-tap Catmull-Rom, in both the combiner and the fixed-function pixel paths (the logos use the latter).
 - Sharpening (sharpen 0-100, default 40): CAS-style pass in the final blit (kBlitHlsl, opts2.x). Anisotropic default 16.
 - Cinematics (.ssc) are in-engine and already follow the render resolution.
-- vars.cfg already has allshadows/highresmeshes/highrestextures true; maxlights=8 is D3D8's fixed-function limit. No
-  draw distance variable: would need the camera's far plane / LOD code found first (not done).
+- vars.cfg already has allshadows/highresmeshes/highrestextures true; maxlights=8 is D3D8's fixed-function limit.
+- Draw distance (draw_distance percent, 25-1000, IndyPort 100/150/200/300/400): 0x323A10 is the level's SetFarClip
+  (float far; clamped to 65536; stores 0x6D7614 and its reciprocal 0x6D7618; 0x323160 rebuilds the projection).
+  Ceylon passes 5555 (projection far 5556.37, near 1). Found by scanning guest memory for the far value and grepping
+  the recompiled code for writes to 0x6D7614. src/game/hooks.cpp scales the argument. At 3% (167 units) the room's
+  walls vanish entirely, so the engine culls against it too, not only the projection. 300% loads and plays; a
+  longer view itself still needs an outdoor level to see (my test saves only reach Ceylon's first room).
+- The inventory wheel's "U" icon (d-pad up) is another original icon texture, not in modern_buttons yet.

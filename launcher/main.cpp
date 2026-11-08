@@ -270,6 +270,7 @@ struct Settings {
     bool vsync = true;
     int aniso = 16;
     int sharpen = 40;
+    int draw_distance = 100;
     bool custom_textures = true;
     bool dump_textures = false;
     int dump_format = 0;
@@ -300,6 +301,7 @@ Settings LoadSettings() {
         s.vsync = t["vsync"].value_or(true);
         s.aniso = int(t["anisotropic_filtering"].value_or(int64_t(16)));
         s.sharpen = std::clamp(int(t["sharpen"].value_or(int64_t(40))), 0, 100);
+        s.draw_distance = std::clamp(int(t["draw_distance"].value_or(int64_t(100))), 25, 1000);
         s.custom_textures = t["custom_textures"].value_or(true);
         s.dump_textures = t["dump_textures"].value_or(false);
         s.dump_format = int(t["texture_dump_format"].value_or(int64_t(0)));
@@ -337,6 +339,7 @@ void SaveSettings(const Settings& s) {
     t.insert_or_assign("vsync", s.vsync);
     t.insert_or_assign("anisotropic_filtering", int64_t(s.aniso));
     t.insert_or_assign("sharpen", int64_t(s.sharpen));
+    t.insert_or_assign("draw_distance", int64_t(s.draw_distance));
     t.insert_or_assign("custom_textures", s.custom_textures);
     t.insert_or_assign("dump_textures", s.dump_textures);
     t.insert_or_assign("texture_dump_format", int64_t(s.dump_format));
@@ -728,6 +731,17 @@ void PageGraphics(Ui& ui) {
         if (Combo("##aniso", &cur, names)) s.aniso = levels[cur];
     }
     Desc("Sharper floors and walls seen at an angle, at little cost on most graphics cards. 16x is best.");
+    Row("Draw distance");
+    {
+        const int values[] = {100, 150, 200, 300, 400};
+        std::vector<std::string> names = {"Original (100%)", "150%", "200%", "300%", "400%"};
+        int cur = 0;
+        for (int i = 0; i < 5; i++)
+            if (values[i] == s.draw_distance) cur = i;
+        if (Combo("##dd", &cur, names)) s.draw_distance = values[cur];
+    }
+    Desc("How far each level draws. The game cuts the view off at each level's own distance (Ceylon: 5555 units); "
+         "longer distances show more of large outdoor areas at a small cost. Applied when a level loads.");
     Row("Sharpening");
     Slider("##sharpen", &s.sharpen, 0, 100, 5, "%d%%");
     Desc("Contrast adaptive sharpening of the final picture: the game's low resolution textures look crisper, "
