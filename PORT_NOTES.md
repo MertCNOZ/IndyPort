@@ -132,6 +132,16 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   1567 vertices further on.
 - Menus now read correctly: options (Start, New Game, Load Game, Options, Artifacts, Credits), the Saved Games book.
 
+## Render states named (2026-11-08)
+- 12 more D3DDevice_SetRenderState_* functions found where the 4831 order predicted them, each checked by `ret 4`
+  and the D3D_RenderState slot it stores (0x4A93D0 + index * 4): TextureFactor 0x498FB0, Dxt1NoiseEnable 0x499080,
+  ZEnable 0x499F50, YuvEnable 0x49A0E0, OcclusionCullEnable 0x49A110, StencilCullEnable 0x49A180,
+  RopZCmpAlwaysRead 0x49A1F0, RopZRead 0x49A210, DoNotCullUncompressed 0x49A230, MultiSampleMode 0x49A250,
+  MultiSampleRenderTargetMode 0x49A290, MultiSampleAntiAlias 0x49A2D0. Left unnamed, the original code ran and the
+  runtime's state missed them: the options menu drew over an opaque white layer. Now the menu looks like the
+  console's (throne room behind the yellow items).
+- `tools/ap_to_level.sh` walks the menus into Ceylon (the menu remembers its cursor, so check with shots).
+
 ## Menu text: findings so far (history)
 - The menu text is drawn by FUN_00320BC0 -> D3DDevice_DrawIndexedVertices with FVF 0x104, set through the
   game's cached wrapper 0x321F50 (SetVertexShader), 0x321E80 (SetStreamSource), 0x321ED0 (SetIndices); 0x321E60
