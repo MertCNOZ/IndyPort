@@ -10,3 +10,6 @@ git -C sdk apply ../sdk-patches/0001-xdk5120-layout-guest-affinity-f3-depth.patc
 - `runtime/kernel/kernel.h`, `threads.cpp`: `kernel::g_guest_affinity`, an opt-in host CPU mask for the threads that
   run guest code. Titles whose own locks assume the Xbox's single CPU race once their threads run in parallel.
 - `runtime/app/main.cpp`: F3 (DumpThreads) scans 512 guest stack words instead of 32. Debugging aid.
+- `runtime/gpu/d3d12.cpp`: frame captures also list small and XYZRHW draws' vertices as read (index + base vertex),
+  the stream 0 header, and save the guest memory around XYZRHW buffers (vb_*.bin). Debugging aid.
+- `runtime/xdk/d3d8.cpp`: `XBE_TRACE_VS=<hex>` logs who sets that vertex shader. Debugging aid.

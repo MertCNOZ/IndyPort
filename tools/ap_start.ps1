@@ -12,6 +12,7 @@ $exe = Join-Path $root "out\build\release\IndyET.exe"
 $log = Join-Path (Split-Path $exe) "logs\indyet.log"
 $env:INDY_AUTOPILOT = $ap
 $env:XBE_CAPTURE_DIR = Join-Path $ap "capture"
+# extra debug variables (XBE_TRACE_VS=104, ...) can be set in the calling shell; they pass through
 
 Add-Type -TypeDefinition @"
 using System;

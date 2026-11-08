@@ -120,6 +120,41 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
 - Light shafts / lantern cones: hard-edged flat wedges, and in two shots cut by a horizontal line at y = 240
   (screen middle). Suspect near-plane / negative w handling for big polygons crossing the camera.
 
+## Menu text: findings so far
+- The menu text is drawn by FUN_00320BC0 -> D3DDevice_DrawIndexedVertices with FVF 0x104, set through the
+  game's cached wrapper 0x321F50 (SetVertexShader), 0x321E80 (SetStreamSource), 0x321ED0 (SetIndices); 0x321E60
+  clears that cache after each batch. XBE_TRACE_VS=104 logs SetVertexShader callers (sdk change).
+- The capture now prints each small or XYZRHW draw's vertices as the draw reads them (index + base vertex) and
+  the buffer's guest address (sdk change in d3d12.cpp). The text buffer is exactly 60 x 24 bytes and moves every
+  frame (0x839xxxxx / 0x83Axxxxx), but what is read there is the right kind of record (x y z color u v) shifted
+  by 0, -8 or +16 bytes from draw to draw. So the vertex data is read from the wrong start address: suspect how
+  the stream's start is taken (vertex buffer Data / lock offset) for these sub-allocated dynamic buffers.
+- Ruled out: the runtime reads the vertex buffer's Data at draw time (vertex.cpp AddRawBuffer), SetIndices and
+  SetTransform write the guest globals back, and the render thread (`-DINDY_RENDER_THREAD=OFF`, a CMake option
+  now) changes nothing.
+- The capture also saves the guest memory around each XYZRHW draw's buffer (vb_<draw>_<address>.bin). No
+  screen-space text records (x 0..640, y 0..480, uv inside the sheet) are anywhere near: these FVF 0x104 draws
+  carry world-space quads (x y z color u v, uv 0/1 per quad), i.e. the font sheet rows seen at the top left. The
+  readable menu text is likely the vertex program B01C8BA1 strips with font 830D2000 (draws 0150-0166 in the
+  first capture), which also leave nothing in captured frames.
+- Menu navigation without readable text is guesswork; the camera moves between the door, the shelf and the
+  throne per section.
+- Window screenshots (`bash tools/ap.sh shot <name>`, tools/winshot.ps1, PrintWindow) show the menu text that
+  frame captures leave out. New game path: menu -> Start (options) -> A (Start Game) -> save slot book ("EMPTY")
+  -> A -> slot list -> A -> "ENTER A NAME" (on-screen keyboard, A types, Start accepts) -> slot shows INDY...
+  `tools/ap_to_book.sh` goes from boot to the book.
+- The book text is FVF 0x104 screen-space quads with the 512x512 font, drawn by FUN_00320FC0:
+  `DrawVerticesUP(prim, count, obj[+0x18] ? obj[+0x18] : obj + obj[+0x2C], stride_of(fvf))`. The records in memory
+  are right (x y z rhw u v, 24 bytes, e.g. 202 260 0 1 0.5616 0.1018) and start on 16-byte boundaries (..2C0,
+  ..9B0), but the pointer the draw gets is 8 or 24 bytes before them (..2A8, ..9A8), so every vertex is read
+  shifted and the glyph quads become streaks; it changes per frame as the text animates. Both the writer and the
+  pointer are the game's own recompiled code, so suspect a mistranslated instruction in the code that builds
+  these text objects (where obj[+0x2C] is set, or the vertex stores). Next: find that writer (FindRefs on the
+  object fields, DumpAt) and compare its stores with the pointer.
+- Ruled out: runtime address conversions (memory.cpp keeps the low bits, contiguous allocations are page aligned),
+  the render thread, IsBusy/BlockOnResource (both replaced and wait correctly), vertex copy timing (the raw path
+  copies at Draw).
+
 ## Playable (2026-11-08)
 - With guest threads on one core the first level (the jungle, with the stone head) loads and plays; the tip box
   text renders correctly. Starting a new game made the game relaunch its own default.xbe (log: "Relaunched").

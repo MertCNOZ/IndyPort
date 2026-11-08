@@ -2,6 +2,7 @@
 # Drives a game started with tools/ap_start.ps1 (INDY_AUTOPILOT=out/ap, XBE_CAPTURE_DIR=out/ap/capture).
 #   tools/ap.sh <command ...>         append one autopilot command, wait for its acknowledgement
 #   tools/ap.sh snap <name>           capture a frame, convert it to out/ap/snaps/<name>.png, print the path
+#   tools/ap.sh shot <name>           screenshot the game window into out/ap/snaps/<name>.png
 #   tools/ap.sh wait <seconds>        sleep
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,6 +25,12 @@ send() {
 }
 
 case "$1" in
+    shot)
+        # what the window shows (tools/winshot.ps1), which can differ from a frame capture
+        name="${2:-shot}"
+        powershell -ExecutionPolicy Bypass -File "$ROOT/tools/winshot.ps1" "$AP/snaps/$name.png" > /dev/null
+        echo "$AP/snaps/$name.png"
+        ;;
     snap)
         name="${2:-snap}"
         last=$(ls -1 "$AP/capture" 2>/dev/null | sort | tail -1)

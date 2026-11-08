@@ -19,6 +19,11 @@ else()
     FetchContent_MakeAvailable(xbe_sdk)
     set(SDK ${xbe_sdk_SOURCE_DIR})
 endif()
+# OFF draws on the title's thread (the runtime's XBE_RENDER_THREAD A/B switch), for debugging draws
+option(INDY_RENDER_THREAD "draw on a render thread of its own" ON)
+if(NOT INDY_RENDER_THREAD)
+    add_compile_definitions(XBE_RENDER_THREAD=0)
+endif()
 include(${SDK}/cmake/XbeRecomp.cmake)
 
 file(GLOB XBE_HOST_SOURCES CONFIGURE_DEPENDS src/*/*.cpp)

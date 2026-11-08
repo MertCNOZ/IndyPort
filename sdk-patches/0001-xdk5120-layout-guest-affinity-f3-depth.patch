@@ -11,6 +11,75 @@ index e36f7ac..9a07980 100644
          }
  }
  
+diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
+index 3f9d4e7..21596ea 100644
+--- a/runtime/gpu/d3d12.cpp
++++ b/runtime/gpu/d3d12.cpp
+@@ -2527,9 +2527,63 @@ void D3D12Backend::CaptureDraw(const State& s, uint32_t prim, uint32_t count, co
+     CaptureTextures(s, stages);
+ }
+ 
+-// small draws: their inputs and constants; then ends the draw's line
++// a draw's first vertices as the draw reads them (index + base vertex), as floats, with the indices that pick them
++void CaptureRawVertices(FILE* f, const Assembled& a) {
++    for (uint32_t b = 0; b < a.buffer_count; b++) {
++        const VertexBuffer& vb = a.buffers[b];
++        if (!vb.src || !vb.stride) continue;
++        fprintf(f, "\n     raw b%u at guest %08X stride %u bytes %u base %d", b, uint32_t(vb.src - kernel::g_base),
++                vb.stride, vb.bytes, a.base_vertex);
++        for (uint32_t i = 0; i < 6; i++) {
++            uint32_t idx = i;
++            if (a.index_src && a.index_count) {
++                if (i >= a.index_count) break;
++                idx = a.index16 ? static_cast<const uint16_t*>(a.index_src)[i] : static_cast<const uint32_t*>(a.index_src)[i];
++            }
++            int64_t v = int64_t(idx) + a.base_vertex;
++            if (v < 0 || uint64_t(v + 1) * vb.stride > vb.bytes) {
++                fprintf(f, "\n       i%u -> v%lld outside the buffer", i, (long long)v);
++                continue;
++            }
++            fprintf(f, "\n       i%u v%lld", i, (long long)v);
++            for (uint32_t o = 0; o + 4 <= vb.stride && o < 64; o += 4) {
++                float x;
++                std::memcpy(&x, vb.src + v * vb.stride + o, 4);
++                fprintf(f, " %g", x);
++            }
++        }
++    }
++    if (a.index_src && a.index_count) {
++        fprintf(f, "\n     indices");
++        for (uint32_t i = 0; i < std::min<uint32_t>(a.index_count, 12); i++)
++            fprintf(f, " %u", a.index16 ? static_cast<const uint16_t*>(a.index_src)[i]
++                                         : static_cast<const uint32_t*>(a.index_src)[i]);
++    }
++}
++
++// small draws: their inputs and constants; screen space and small draws: their raw vertices; then ends the line.
++// Screen space draws also save the guest memory around their first buffer, 1 KB before to 8 KB after, as
++// vb_<draw>_<guest address>.bin
+ void D3D12Backend::EndDrawCapture(const State& s, const Assembled& a, uint32_t count, const DrawConstants& c) {
+     if (count <= kQuadVertices) CaptureInputs(s, a, c);
++    if (a.pretransformed || count <= 64) CaptureRawVertices(cap_, a);
++    if (a.pretransformed && a.buffer_count && a.buffers[0].src) {
++        // the stream's vertex buffer header: Common, Data (physical), Lock
++        uint32_t hdr = s.streams[0].vb;
++        if (hdr) {
++            uint32_t w[3];
++            std::memcpy(w, kernel::g_base + hdr, sizeof(w));
++            fprintf(cap_, "\n     stream0 header %08X common %08X data %08X lock %08X stride %u", hdr, w[0], w[1], w[2],
++                    s.streams[0].stride);
++        }
++        uint32_t at = uint32_t(a.buffers[0].src - kernel::g_base) - 1024;
++        char name[48];
++        snprintf(name, sizeof(name), "vb_%04u_%08X.bin", cap_i_ - 1, at);
++        if (FILE* f = _wfopen((cap_dir_ / name).c_str(), L"wb")) {
++            fwrite(kernel::g_base + at, 1, 1024 + 8192, f);
++            fclose(f);
++        }
++    }
+     fputc('\n', cap_);
+ }
+ 
 diff --git a/runtime/kernel/kernel.h b/runtime/kernel/kernel.h
 index 163ea09..50a3161 100644
 --- a/runtime/kernel/kernel.h
@@ -39,6 +108,26 @@ index a8acfd6..be194bb 100644
          (*g)();
          return 0;
      };
+diff --git a/runtime/xdk/d3d8.cpp b/runtime/xdk/d3d8.cpp
+index a6e65d6..263fee2 100644
+--- a/runtime/xdk/d3d8.cpp
++++ b/runtime/xdk/d3d8.cpp
+@@ -961,6 +961,15 @@ HLE_STDCALL(D3DDevice_GetVertexShaderFunction, 3) {
+ HLE_STDCALL(D3DDevice_SetVertexShader, 1) {
+     std::lock_guard<std::recursive_mutex> lock(g_lock);
+     uint32_t h = a[0];
++    {
++        // XBE_TRACE_VS=<hex handle>: log who sets that vertex shader, the first 40 times
++        static const uint32_t trace = [] {
++            const char* v = std::getenv("XBE_TRACE_VS");
++            return v ? uint32_t(std::strtoul(v, nullptr, 16)) : 0u;
++        }();
++        static int traced = 0;
++        if (trace && h == trace && traced++ < 40) LOGR("trace: SetVertexShader %X from %08X", h, R32(ctx.esp));
++    }
+     g_state.vs_handle = h;
+     g_state.vs = nullptr;
+     if (h & 1) {
 diff --git a/xdk/5120/layout.toml b/xdk/5120/layout.toml
 new file mode 100644
 index 0000000..a3ac3d8
