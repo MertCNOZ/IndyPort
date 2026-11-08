@@ -266,3 +266,25 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   Start loads the level (tools/ap_to_level.sh).
 - Debug switches: XBE_LOG=info|warn, XBE_AUDIO_DUMP=<wav>, XBE_TRACE_DSOUND, XBE_TRACE_WAIT, XBE_TRACE_DELAY,
   XBE_PERF, INDY_FPS=1; tools/sample_thread.ps1, tools/audio_check.py.
+
+## Picture and controls features (2026-11-08)
+
+- Gamepad mapping: settings pad_map (16 game buttons -> controller button or -1), src/common/pad_map.cpp in the pad
+  hook before keyboard/autopilot; IndyPort Controls page with reset. Logic checked with a standalone test (A/B swap,
+  LB->Black, unmapped White, View->Start). Not tried on a physical pad by me.
+- Built-in texture packs: textures/packs/<name>, texture_packs = "a,b" (SDK texturedumper: the player's replacement
+  folder is listed first and wins). packs/ in the repo is copied there by the texture_packs target and release.bat.
+- modern_buttons pack: tools/make_button_icons.ps1 draws the 32x32 A/B/X/Y (keys be24b0363a4db709, 46079a11e789a4d5,
+  46095a0cd4438b43, 2978e289885083bb) and the 128x256 icon atlas ae7c8bc40d1623af at 8x from shapes and text.
+  Atlas boxes found from the dump's alpha. Black/White become RB/LB. Default on (game load hook sets it when the
+  settings file has no texture_packs key).
+- Sharp text and HUD (ui_upscale, SDK gpu/ui_upscale.cpp): a texture first bound in a pretransformed draw is keyed and
+  a copy made on a worker: x4 (longest side up to 2048) Catmull-Rom; alpha masks (mostly 0/255, few between) get a
+  two-pass box blur of ~0.75 source texel then a tightened edge -> smooth glyph outlines. Soft glows are not masks
+  (a glow misread as a mask became an opaque grey disc before the "between" rule). No premultiply (additive effects).
+- Sharper movies (video_filter): WMVs are 640x480; linear textures >=256x192 in screen space get kTexSmooth ->
+  cubictap() 16-tap Catmull-Rom, in both the combiner and the fixed-function pixel paths (the logos use the latter).
+- Sharpening (sharpen 0-100, default 40): CAS-style pass in the final blit (kBlitHlsl, opts2.x). Anisotropic default 16.
+- Cinematics (.ssc) are in-engine and already follow the render resolution.
+- vars.cfg already has allshadows/highresmeshes/highrestextures true; maxlights=8 is D3D8's fixed-function limit. No
+  draw distance variable: would need the camera's far plane / LOD code found first (not done).

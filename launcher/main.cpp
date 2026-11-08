@@ -45,7 +45,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr const char* kVersion = "0.2.0";
+constexpr const char* kVersion = "0.3.0";
 constexpr const wchar_t* kGameExe = L"IndyET.exe";
 constexpr const char* kTitleId = "4c410007";
 
@@ -268,7 +268,8 @@ struct Settings {
     int render_percent = 100;
     int fps_cap = 60;
     bool vsync = true;
-    int aniso = 0;
+    int aniso = 16;
+    int sharpen = 40;
     bool custom_textures = true;
     bool dump_textures = false;
     int dump_format = 0;
@@ -297,7 +298,8 @@ Settings LoadSettings() {
         s.render_percent = int(t["render_percent"].value_or(int64_t(100)));
         s.fps_cap = int(t["fps_cap"].value_or(int64_t(60)));
         s.vsync = t["vsync"].value_or(true);
-        s.aniso = int(t["anisotropic_filtering"].value_or(int64_t(0)));
+        s.aniso = int(t["anisotropic_filtering"].value_or(int64_t(16)));
+        s.sharpen = std::clamp(int(t["sharpen"].value_or(int64_t(40))), 0, 100);
         s.custom_textures = t["custom_textures"].value_or(true);
         s.dump_textures = t["dump_textures"].value_or(false);
         s.dump_format = int(t["texture_dump_format"].value_or(int64_t(0)));
@@ -334,6 +336,7 @@ void SaveSettings(const Settings& s) {
     t.insert_or_assign("fps_cap", int64_t(s.fps_cap));
     t.insert_or_assign("vsync", s.vsync);
     t.insert_or_assign("anisotropic_filtering", int64_t(s.aniso));
+    t.insert_or_assign("sharpen", int64_t(s.sharpen));
     t.insert_or_assign("custom_textures", s.custom_textures);
     t.insert_or_assign("dump_textures", s.dump_textures);
     t.insert_or_assign("texture_dump_format", int64_t(s.dump_format));
@@ -724,7 +727,11 @@ void PageGraphics(Ui& ui) {
             if (levels[i] == s.aniso) cur = i;
         if (Combo("##aniso", &cur, names)) s.aniso = levels[cur];
     }
-    Desc("Sharper floors and walls seen at an angle, at little cost on most graphics cards.");
+    Desc("Sharper floors and walls seen at an angle, at little cost on most graphics cards. 16x is best.");
+    Row("Sharpening");
+    Slider("##sharpen", &s.sharpen, 0, 100, 5, "%d%%");
+    Desc("Contrast adaptive sharpening of the final picture: the game's low resolution textures look crisper, "
+         "without halos on edges. 0% turns it off.");
 
     Heading("TEXT AND HUD");
     Row("Sharp text and HUD");

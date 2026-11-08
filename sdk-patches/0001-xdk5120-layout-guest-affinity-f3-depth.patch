@@ -1,11 +1,17 @@
 diff --git a/runtime/app/app.h b/runtime/app/app.h
-index 229e2fa..9b781fb 100644
+index 229e2fa..cf152d3 100644
 --- a/runtime/app/app.h
 +++ b/runtime/app/app.h
-@@ -26,7 +26,11 @@ struct Settings {
+@@ -22,11 +22,16 @@ struct Settings {
+     uint32_t render_percent = 100;   // of the output height
+     uint32_t fps_cap = 60;           // 0 unlimited, kFpsCapRefresh the monitor's refresh rate
+     bool vsync = true;
+-    uint32_t aniso = 0;              // 0 as the game asks
++    uint32_t aniso = 16;             // 0 as the game asks
      bool custom_textures = true;     // images in textures\replacement\ beside the exe replace the game's
      bool dump_textures = false;      // each texture once into textures\dumps\ beside the exe
      uint32_t texture_dump_format = 0;  // 0 PNG, 1 DDS
++    uint32_t sharpen = 40;             // 0-100: contrast adaptive sharpening of the final picture
 +    bool video_filter = true;          // movies scaled up with a Catmull-Rom filter instead of bilinear
 +    bool ui_upscale = true;            // sharper fonts, menus and HUD: screen space textures upscaled (gpu/ui_upscale.h)
 +    std::string texture_packs;         // built-in packs in textures\packs\ beside the exe, comma separated
@@ -14,7 +20,7 @@ index 229e2fa..9b781fb 100644
  };
  
  Settings& Get();
-@@ -45,8 +49,8 @@ float RenderScale(uint32_t guest_height);
+@@ -45,8 +50,8 @@ float RenderScale(uint32_t guest_height);
  bool Widescreen();
  
  std::filesystem::path ExeDir();
@@ -151,21 +157,22 @@ index e36f7ac..9a07980 100644
  }
  
 diff --git a/runtime/app/settings.cpp b/runtime/app/settings.cpp
-index 075b3b7..114c952 100644
+index 075b3b7..9df86ed 100644
 --- a/runtime/app/settings.cpp
 +++ b/runtime/app/settings.cpp
-@@ -54,6 +54,10 @@ void Load() {
+@@ -54,6 +54,11 @@ void Load() {
      s.dump_textures = t["dump_textures"].value_or(s.dump_textures);
      s.texture_dump_format = std::min(t["texture_dump_format"].value_or(s.texture_dump_format), 1u);
      s.join_ip = t["join_ip"].value_or(s.join_ip);
 +    s.texture_packs = t["texture_packs"].value_or(s.texture_packs);
 +    s.ui_upscale = t["ui_upscale"].value_or(s.ui_upscale);
 +    s.video_filter = t["video_filter"].value_or(s.video_filter);
++    s.sharpen = std::min(t["sharpen"].value_or(s.sharpen), 100u);
 +    s.game_path = t["game_path"].value_or(s.game_path);
      for (const Option& o : kGame.options) {
          if (o.flag) *o.flag = t[o.key].value_or(*o.flag);
          else *o.value = t[o.key].value_or(*o.value);
-@@ -75,7 +79,11 @@ toml::table Table() {
+@@ -75,7 +80,12 @@ toml::table Table() {
                    {"custom_textures", s.custom_textures},
                    {"dump_textures", s.dump_textures},
                    {"texture_dump_format", int64_t(s.texture_dump_format)},
@@ -174,7 +181,8 @@ index 075b3b7..114c952 100644
 +                  {"game_path", s.game_path},
 +                  {"texture_packs", s.texture_packs},
 +                  {"ui_upscale", s.ui_upscale},
-+                  {"video_filter", s.video_filter}};
++                  {"video_filter", s.video_filter},
++                  {"sharpen", int64_t(s.sharpen)}};
      for (const Option& o : kGame.options) {
          if (o.flag) t.insert(o.key, *o.flag);
          else t.insert(o.key, int64_t(*o.value));
@@ -287,10 +295,39 @@ index 7e6507d..b72ef2d 100644
      va_list ap;
      va_start(ap, fmt);
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index 3f9d4e7..35699ad 100644
+index 3f9d4e7..3ddaa61 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
-@@ -345,6 +345,7 @@ struct Tex {
+@@ -114,7 +114,7 @@ bool CaptureOn() {
+ }
+ 
+ const char* kBlitHlsl = R"(
+-cbuffer B : register(b1) { float4 uvrect; float4 opts; };
++cbuffer B : register(b1) { float4 uvrect; float4 opts; float4 opts2; };
+ Texture2D img : register(t0);
+ Texture2D lut : register(t1);
+ SamplerState ls : register(s0);
+@@ -134,6 +134,19 @@ float4 psmain(O i) : SV_Target {
+     for (int y = 0; y < n; y++)
+         for (int x = 0; x < n; x++) c += img.SampleLevel(ls, i.uv + px * ((float2(x, y) + 0.5) / n - 0.5), 0);
+     c /= n * n;
++    // contrast adaptive sharpening (after AMD FidelityFX CAS): the cross of neighbouring source texels pulls the
++    // centre apart from them, less where the area is already contrasty, so edges do not ring
++    if (opts2.x > 0 && n == 1) {
++        float2 size;
++        img.GetDimensions(size.x, size.y);
++        float2 t = 1.0 / size;
++        float3 a = img.SampleLevel(ls, i.uv + float2(0, -t.y), 0).rgb, b = img.SampleLevel(ls, i.uv + float2(-t.x, 0), 0).rgb;
++        float3 d = img.SampleLevel(ls, i.uv + float2(t.x, 0), 0).rgb, e = img.SampleLevel(ls, i.uv + float2(0, t.y), 0).rgb;
++        float3 mn = min(c.rgb, min(min(a, b), min(d, e))), mx = max(c.rgb, max(max(a, b), max(d, e)));
++        float3 amp = sqrt(saturate(min(mn, 1.0 - mx) / max(mx, 1e-4)));
++        float3 w = -amp * lerp(0.125, 0.2, opts2.x);
++        c.rgb = saturate((c.rgb + w * (a + b + d + e)) / (1.0 + 4.0 * w));
++    }
+     c.rgb *= opts.w;
+     if (opts.x > 0) c.rgb = float3(lut.Sample(ps, float2(c.r, 0.5)).r, lut.Sample(ps, float2(c.g, 0.5)).g, lut.Sample(ps, float2(c.b, 0.5)).b);
+     return float4(c.rgb, opts.y > 0 ? c.a : 1);
+@@ -345,6 +358,7 @@ struct Tex {
      const Tex* swap = nullptr;  // the texture pack's image drawn in its place
      uint64_t pack_key = 0;      // its pack image is still loading
      uint32_t pack_gen = 0;      // texturedumper::Generation the key was taken at, 0 after new bytes
@@ -298,7 +335,15 @@ index 3f9d4e7..35699ad 100644
  };
  
  struct PsoKey {
-@@ -736,6 +737,7 @@ private:
+@@ -385,6 +399,7 @@ struct BlitOptions {
+     bool alpha = false;       // the source's alpha, else 1
+     uint32_t taps = 1;        // n x n box filter per pixel
+     float mul = 1;            // colour scale
++    float sharpen = 0;        // contrast adaptive sharpening, 0 off to 1
+     DXGI_FORMAT rtv = kBgra;  // the target's format
+     bool over = false;        // premultiplied over the target, which keeps its alpha
+ };
+@@ -736,6 +751,7 @@ private:
      uint32_t recent_used_next_ = 0;
      DrawBinds binds_;
      std::unordered_map<uint64_t, Tex> textures_;  // by data address, a P8 texture's with its palette's above
@@ -306,7 +351,19 @@ index 3f9d4e7..35699ad 100644
      std::unordered_map<uint64_t, Tex> pack_textures_;  // texture pack images by key, kept for the run
      std::unordered_map<uint64_t, ComPtr<ID3D12PipelineState>> blit_psos_;
      Extension* ext_ = nullptr;
-@@ -1874,6 +1876,11 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
+@@ -1410,8 +1426,9 @@ void D3D12Backend::Blit(ID3D12Resource* src, DXGI_FORMAT fmt, const float uvrect
+     dev_->CreateShaderResourceView(lut_.Get(), &sv, Cpu(srv_heap_.Get(), slot + 1, srv_inc_));
+     uint32_t si = EnsureBlitSamplers();
+     Alloc cb = Upload(256, 256);
+-    float c[8] = {uvrect[0], uvrect[1], uvrect[2], uvrect[3],
+-                  o.gamma ? 1.0f : 0.0f, o.alpha ? 1.0f : 0.0f, float(o.taps), o.mul};
++    float c[12] = {uvrect[0], uvrect[1], uvrect[2], uvrect[3],
++                   o.gamma ? 1.0f : 0.0f, o.alpha ? 1.0f : 0.0f, float(o.taps), o.mul,
++                   o.sharpen, 0, 0, 0};
+     std::memcpy(cb.cpu, c, sizeof(c));
+     DrawFullScreen(EnsureBlitPipeline(o.rtv, o.over), cb.gpu, slot, si);
+ }
+@@ -1874,6 +1891,11 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
              tx.pack_gen = 0;
          }
      }
@@ -318,7 +375,7 @@ index 3f9d4e7..35699ad 100644
      if (tx.pack_gen != texturedumper::Generation()) LatchPackKey(tx, d, fi, colours);
      if (tx.pack_key) LatchPackImage(tx);
      const Tex& drawn = tx.swap ? *tx.swap : tx;
-@@ -1892,6 +1899,7 @@ void D3D12Backend::LatchPackKey(Tex& tx, const TextureDesc& d, const FormatInfo&
+@@ -1892,6 +1914,7 @@ void D3D12Backend::LatchPackKey(Tex& tx, const TextureDesc& d, const FormatInfo&
      texturedumper::Dump(key, d, p, colours);
      // dumping alone keys the bytes too: the pack image is not drawn then
      tx.pack_key = texturedumper::Replacing() ? key : 0;
@@ -326,7 +383,7 @@ index 3f9d4e7..35699ad 100644
  }
  
  // the pack image for tx's bytes once it has loaded; textures with the same bytes share its GPU copy
-@@ -1952,6 +1960,9 @@ ID3D12Resource* D3D12Backend::BindTexture(const State& s, int stage, DrawTexture
+@@ -1952,6 +1975,9 @@ ID3D12Resource* D3D12Backend::BindTexture(const State& s, int stage, DrawTexture
      const FormatInfo& fi = Format(d.format);
      info.kind = TextureKind(d);
      info.rect = d.linear;
@@ -336,7 +393,7 @@ index 3f9d4e7..35699ad 100644
  
      // rendered by the GPU: sample the target itself; DXT data loaded over a target's memory is not it
      uint64_t alt = 0;
-@@ -2527,9 +2538,63 @@ void D3D12Backend::CaptureDraw(const State& s, uint32_t prim, uint32_t count, co
+@@ -2527,9 +2553,63 @@ void D3D12Backend::CaptureDraw(const State& s, uint32_t prim, uint32_t count, co
      CaptureTextures(s, stages);
  }
  
@@ -401,7 +458,7 @@ index 3f9d4e7..35699ad 100644
      fputc('\n', cap_);
  }
  
-@@ -2834,6 +2899,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2834,6 +2914,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // stage textures, then the pixel shader made for them
      DrawTextures stages;
@@ -409,7 +466,17 @@ index 3f9d4e7..35699ad 100644
      if (!BindStageTexturesAndTargets(s, stages)) return;
      PixelKey pk = MakePixelKey(s, stages.info);
      pk.quad = sh.quad;
-@@ -3324,12 +3390,12 @@ void LogPerf() {
+@@ -3245,7 +3326,8 @@ void D3D12Backend::BlitFrame(Target& t) {
+     cl_->RSSetScissorRects(1, &scissor);
+     binds_ = {};
+     Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+-    Blit(t.res.Get(), t.fmt, uv, {.gamma = gamma_});
++    float sharpen = float(std::min(app::Get().sharpen, 100u)) / 100.0f;
++    Blit(t.res.Get(), t.fmt, uv, {.gamma = gamma_, .sharpen = sharpen});
+ }
+ 
+ void D3D12Backend::RenderUi() {
+@@ -3324,12 +3406,12 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -424,7 +491,7 @@ index 3f9d4e7..35699ad 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3338,7 +3404,7 @@ void LogPerf() {
+@@ -3338,7 +3420,7 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
