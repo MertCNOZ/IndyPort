@@ -104,6 +104,22 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
 - Fonts: 512x512 63a2aab7d65f6005 and 256x512 60a1460f61441655 (DXT5, glyphs in alpha) decode correctly
   (`tools/png_alpha.py` shows the alpha), so the garbled menu text comes from how its quads are drawn.
 
+## Testing without a person at the keyboard
+- `powershell -ExecutionPolicy Bypass -File tools\ap_start.ps1` starts the game with `INDY_AUTOPILOT=out\ap` and
+  `XBE_CAPTURE_DIR=out\ap\capture`, and posts Enter to the "The game is ready" page (shown after the game code is
+  rebuilt) until the renderer is up. Run it from a normal terminal, not the sandboxed shell.
+- `bash tools/ap.sh press start`, `press a`, `hold lt 2`, `stick l 0 1 3` drive port 0 through
+  `src/common/autopilot.cpp` (no window focus needed); `bash tools/ap.sh snap <name>` captures a frame and writes
+  out\ap\snaps\<name>.png (640x480 guest image) and its draw list (out\ap\capture\<time>\frame.txt).
+- settings.toml is set to a 1280x720 window for testing.
+- Boot path: intro (Indy on a rope) -> Start -> attract fly-through (Loading) -> A -> menu camera tour -> Start ->
+  throne room with the menu.
+- Menu text = draws with FVF 0x104 (XYZRHW|TEX1), prim 5, font 835B4000 512x512 (decodes fine), e.g. draws
+  1074-1075. They leave nothing in the captured frame. The capture only lists vertices for draws of up to 4
+  vertices (CaptureInputs), and those lists came out empty; seeing the text vertices needs a capture change.
+- Light shafts / lantern cones: hard-edged flat wedges, and in two shots cut by a horizontal line at y = 240
+  (screen middle). Suspect near-plane / negative w handling for big polygons crossing the camera.
+
 ## Playable (2026-11-08)
 - With guest threads on one core the first level (the jungle, with the stone head) loads and plays; the tip box
   text renders correctly. Starting a new game made the game relaunch its own default.xbe (log: "Relaunched").

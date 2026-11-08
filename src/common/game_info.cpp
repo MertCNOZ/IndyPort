@@ -4,6 +4,20 @@
 namespace game {
 void KeyboardPad(int port, input::Pad& pad);  // keyboard.cpp
 void PinGuestThreads();                       // cpu.cpp
+void StartAutopilot();                        // autopilot.cpp
+void AutopilotPad(int port, input::Pad& pad);
+
+// before the window and boot: guest threads on one core, the autopilot if INDY_AUTOPILOT is set
+void Init() {
+    PinGuestThreads();
+    StartAutopilot();
+}
+
+// the keyboard, then the autopilot's presses on top
+void Pad(int port, input::Pad& pad) {
+    KeyboardPad(port, pad);
+    AutopilotPad(port, pad);
+}
 }
 
 // what the runtime asks of the game; strings must be set, hooks may stay null
@@ -19,11 +33,11 @@ const app::GameInfo app::kGame = {
     .options = {},                        // game settings kept in the settings file
     .load = nullptr,                      // reads more from the settings file's toml::table
     .save = nullptr,                      // writes more into it
-    .init = game::PinGuestThreads,        // after the settings load, before the window and boot
+    .init = game::Init,                   // after the settings load, before the window and boot
     .loaded = nullptr,                    // image in memory, before its entry point runs
     .window = nullptr,                    // the game window is up
     .message = nullptr,                   // window messages first; true takes one
     .ui = nullptr,                        // ImGui drawing each frame
-    .pad = game::KeyboardPad,             // changes a polled pad: the keyboard is port 0's controller
+    .pad = game::Pad,                     // changes a polled pad: keyboard and autopilot drive port 0
     .rumble = nullptr,                    // changes a rumble before it is set
 };
