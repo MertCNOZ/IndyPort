@@ -5,12 +5,14 @@ namespace game {
 void KeyboardPad(int port, input::Pad& pad);  // keyboard.cpp
 void PinGuestThreads();                       // cpu.cpp
 void StartAutopilot();                        // autopilot.cpp
+void StartWatch();                            // watch.cpp
 void AutopilotPad(int port, input::Pad& pad);
 
 // before the window and boot: guest threads on one core, the autopilot if INDY_AUTOPILOT is set
 void Init() {
     PinGuestThreads();
     StartAutopilot();
+    StartWatch();
 }
 
 // the keyboard, then the autopilot's presses on top

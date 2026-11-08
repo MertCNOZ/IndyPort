@@ -120,7 +120,19 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
 - Light shafts / lantern cones: hard-edged flat wedges, and in two shots cut by a horizontal line at y = 240
   (screen middle). Suspect near-plane / negative w handling for big polygons crossing the camera.
 
-## Menu text: findings so far
+## Menu text: fixed (2026-11-08)
+- Cause: the runtime's DrawUp (DrawVerticesUP / DrawIndexedVerticesUP) left g_state.base_vertex at whatever the
+  last SetIndices set, and vertex.cpp adds it for indexed draws (`first_vertex = bounds.first + base_vertex`). UP
+  indices count from the vertices passed, so the text read vertices ~1500 entries past its own (streaks, wrong
+  glyphs, the font sheet rows). DrawUp now draws with base vertex 0 and restores it (sdk patch, d3d8.cpp). No
+  other port used DrawIndexedVerticesUP, which is why it never showed.
+- How it was found: INDY_WATCH (src/common/watch.cpp, write watch on guest memory, `tools/watch_map.py`) found the
+  writers of the text buffer 0x6F7650 (sub_0031C390 for XYZRHW|TEX1, sub_0031C2C0 for XYZRHW, called from
+  FUN_0031DFF0); XBE_TRACE_BATCH showed every batch valid at draw time; the capture showed the renderer reading
+  1567 vertices further on.
+- Menus now read correctly: options (Start, New Game, Load Game, Options, Artifacts, Credits), the Saved Games book.
+
+## Menu text: findings so far (history)
 - The menu text is drawn by FUN_00320BC0 -> D3DDevice_DrawIndexedVertices with FVF 0x104, set through the
   game's cached wrapper 0x321F50 (SetVertexShader), 0x321E80 (SetStreamSource), 0x321ED0 (SetIndices); 0x321E60
   clears that cache after each batch. XBE_TRACE_VS=104 logs SetVertexShader callers (sdk change).

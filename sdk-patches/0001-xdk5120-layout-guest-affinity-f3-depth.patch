@@ -109,7 +109,7 @@ index a8acfd6..be194bb 100644
          return 0;
      };
 diff --git a/runtime/xdk/d3d8.cpp b/runtime/xdk/d3d8.cpp
-index a6e65d6..0cb99d7 100644
+index a6e65d6..dc06dee 100644
 --- a/runtime/xdk/d3d8.cpp
 +++ b/runtime/xdk/d3d8.cpp
 @@ -961,6 +961,15 @@ HLE_STDCALL(D3DDevice_GetVertexShaderFunction, 3) {
@@ -134,7 +134,7 @@ index a6e65d6..0cb99d7 100644
  
 +// XBE_TRACE_ORIGIN=<hex vertex shader>: which draw path issues triangle lists with that shader (the immediate one sets
 +// the low bit), with the guest stack, 4 times per path. Debugging aid.
-+void TraceOrigin(const char* path, uint32_t prim, uint32_t count) {
++void TraceOrigin(const char* path, uint32_t prim, uint32_t count, uint32_t src = 0) {
 +    // "q<count>": quad lists of that many vertices whatever the shader
 +    static const char* env = std::getenv("XBE_TRACE_ORIGIN");
 +    static const bool by_count = env && env[0] == 'q';
@@ -148,8 +148,8 @@ index a6e65d6..0cb99d7 100644
 +        if (!cap_left) return;
 +        cap_left--;
 +        uint32_t vb = g_state.streams[0].vb;
-+        LOGR("origin %04d: %s prim %u count %u vs %X stream0 %08X data %08X stride %u", cap_n++, path, prim, count,
-+             g_state.vs_handle, vb, vb ? R32(vb + 4) : 0, g_state.streams[0].stride);
++        LOGR("origin %04d: %s prim %u count %u vs %X stream0 %08X data %08X stride %u src %08X", cap_n++, path, prim,
++             count, g_state.vs_handle, vb, vb ? R32(vb + 4) : 0, g_state.streams[0].stride, src);
 +        return;
 +    }
 +    if (!want) return;
@@ -204,15 +204,27 @@ index a6e65d6..0cb99d7 100644
      if (g_backend) g_backend->Draw(g_state, a[0], 0, a[1], indices);
      return 0;
  }
-@@ -1261,6 +1326,7 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
+@@ -1260,9 +1325,19 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
+     // indexed: count is of indices, the ring takes the vertices up to the highest one
      uint32_t used = indices ? *std::max_element(indices, indices + count) + 1u : count;
      auto stream = g_state.streams[0];
++    // the indices of DrawIndexedVerticesUP count from the vertices given: SetIndices' base vertex is not added
++    uint32_t base_vertex = g_state.base_vertex;
++    g_state.base_vertex = 0;
      g_state.streams[0] = {UpVertices(vertices, used * stride), stride};
-+    TraceOrigin(indices ? "DrawUp indexed" : "DrawUp", prim, count);
++    {
++        // the title's vertices when they are guest memory (not the immediate mode's packed copy)
++        const uint8_t* v = static_cast<const uint8_t*>(vertices);
++        uint32_t src = v >= kernel::g_base && v < kernel::g_base + 0xFFFFFFFFull ? uint32_t(v - kernel::g_base) : 0;
++        TraceOrigin(indices ? "DrawUp indexed" : "DrawUp", prim, count, src);
++    }
      g_backend->Draw(g_state, prim, 0, count, reinterpret_cast<const uint8_t*>(indices));
      g_state.streams[0] = stream;
++    g_state.base_vertex = base_vertex;
  }
-@@ -1425,6 +1491,7 @@ void Walk(uint32_t end) {
+ 
+ // bytes per vertex of the bound format: stream 0 of the FVF or of the shader's declaration
+@@ -1425,6 +1500,7 @@ void Walk(uint32_t end) {
  
  HLE_STDCALL(D3DDevice_DrawVerticesUP, 4) {
      std::lock_guard<std::recursive_mutex> lock(g_lock);
@@ -220,10 +232,36 @@ index a6e65d6..0cb99d7 100644
      Walk(Dev(kDevPush));
      DrawUp(a[0], a[1], HostPtr(a[2]), a[3]);
      return 0;
-@@ -1432,6 +1499,7 @@ HLE_STDCALL(D3DDevice_DrawVerticesUP, 4) {
+@@ -1432,6 +1508,33 @@ HLE_STDCALL(D3DDevice_DrawVerticesUP, 4) {
  // (prim, index count, 16 bit indices, vertices, stride)
  HLE_STDCALL(D3DDevice_DrawIndexedVerticesUP, 5) {
      std::lock_guard<std::recursive_mutex> lock(g_lock);
++    {
++        // XBE_TRACE_BATCH=<hex vertex address>: screen space batches drawn from there, with their indices and the
++        // referenced vertices whose rhw is not 1, 12 times. Debugging aid.
++        static const char* env = std::getenv("XBE_TRACE_BATCH");
++        static const uint32_t want = env ? uint32_t(std::strtoul(env, nullptr, 16)) : 0u;
++        static int left = 400;
++        if (want && a[3] == want && (g_state.vs_handle & 0xE) == 4 && left > 0) {
++            left--;
++            const uint16_t* ix = static_cast<const uint16_t*>(HostPtr(a[2]));
++            uint32_t lo = 0xFFFF, hi = 0;
++            std::string list;
++            for (uint32_t i = 0; i < a[1]; i++) {
++                lo = std::min<uint32_t>(lo, ix[i]);
++                hi = std::max<uint32_t>(hi, ix[i]);
++                if (i < 24) list += " " + std::to_string(ix[i]);
++            }
++            LOGR("batch: prim %u indices %u range %u..%u stride %u vs %X from %08X:%s", a[0], a[1], lo, hi, a[4],
++                 g_state.vs_handle, R32(ctx.esp), list.c_str());
++            for (uint32_t v = lo; v <= hi && v < lo + 48; v++) {
++                float f[6];
++                std::memcpy(f, HostPtr(a[3] + v * a[4]), std::min<uint32_t>(a[4], 24));
++                bool off = f[0] <= 0.5f || f[1] <= 0.5f || f[0] > 640 || f[1] > 480;
++                if (f[3] != 1.0f || off) LOGR("batch:   v%u bad: %g %g %g %g %g %g", v, f[0], f[1], f[2], f[3], f[4], f[5]);
++            }
++        }
++    }
 +    TraceDraw(ctx, "DrawIndexedVerticesUP", a[3], a[4], a[0], a[1]);
      Walk(Dev(kDevPush));
      DrawUp(a[0], a[1], HostPtr(a[3]), a[4], static_cast<const uint16_t*>(HostPtr(a[2])));
