@@ -31,13 +31,19 @@ by hand in Ghidra. Not all of the 131 are necessarily linked into this game.
 - `tools/find_in_export.py` searches that export by asm patterns (NV2A methods, struct offsets, constants).
 - `tools/align_symbols.py` guesses addresses from a reference game's symbol order (007 NightFire, 4831):
   81% right in a leave-one-out test, so its guesses are only leads to verify.
-- Found by hand so far: D3DDevice_SetIndices, D3DDevice_DrawVerticesUP, D3DDevice_Swap, D3D_SetFence and the
-  data D3D_pDevice, D3D_DirtyFlags, D3D_IndexData, D3D_Streams (evidence in config/game.toml comments).
+- Found by hand so far (evidence in config/game.toml comments): Direct3D_CreateDevice, D3DDevice_Swap, Clear,
+  End, SetIndices, DrawVerticesUP, Get{RenderTarget,DepthStencilSurface,BackBuffer}2, SetScreenSpaceOffset,
+  SetGammaRamp, BlockUntilVerticalBlank, SetTextureStageStateNotInline, D3D_SetFence and the data D3D_pDevice,
+  D3D_DirtyFlags, D3D_IndexData, D3D_Streams, D3D_DeferredTextureState.
+- Status: 98 symbols found, 150 at 0. Of those, ~45 are networking/Bink (not in this game), 43 are D3DDevice
+  (mostly render states, lights, push buffers; not all are necessarily linked), 49 are DirectSound, 7 CRT math.
+- Leads: 0x49EE80 CDevice_KickOff?, 0x49F340 MakeSpace?, 0x49D260 D3DResource_AddRef? (the surface getters call it).
 
 ## 5120 device layout
 **5120 is its own layout**, see `xdk5120/layout.draft.toml`: the front of CDevice mostly matches 4831, a few
-fields are 4 bytes lower (Time 0x2C, PixelShader 0x36C, VertexShader 0x37C, IndexBuffer 0x388), and the tail is
-0xC00 shorter (SwapCount 0x2010 vs 0x2C10). 18 values proven, the rest TODO.
+fields are 4 bytes lower (Time 0x2C, PixelShader 0x36C, VertexShader 0x37C, IndexBuffer 0x388), and everything
+from RenderTarget on, the miniport block included, sits 0xC00 lower (miniport 0x17C0, SwapCount 0x2010, size
+0x2030). 36 values proven; ZScale and the DSOUND/XPP values are still TODO.
 
 ## Open questions
 - The old PC release shares the codebase and can help name game functions (camera, frame limiter, menus).
