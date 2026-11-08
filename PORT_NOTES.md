@@ -132,6 +132,15 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   1567 vertices further on.
 - Menus now read correctly: options (Start, New Game, Load Game, Options, Artifacts, Credits), the Saved Games book.
 
+## Gameplay test (2026-11-08, autopilot only)
+- Menu -> Start continues the profile in the first level, Ceylon: opening cinematic (Start skips it), then play.
+- Walking (left stick), camera (right stick), A (action), the tip boxes, climbing prompts all work; the sky, fog,
+  foliage and lighting look right (the white sky sheets are gone with the render state setters named).
+- A minute of random play: no errors, no crash. Falling off the cliff gives the game's own "The End / Continue /
+  Quit" screen; Continue restarts the level.
+- Still to check: the menu's light shafts (were hard-edged and cut at the screen middle), longer play, later
+  levels, sound.
+
 ## Render states named (2026-11-08)
 - 12 more D3DDevice_SetRenderState_* functions found where the 4831 order predicted them, each checked by `ret 4`
   and the D3D_RenderState slot it stores (0x4A93D0 + index * 4): TextureFactor 0x498FB0, Dxt1NoiseEnable 0x499080,
