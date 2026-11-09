@@ -297,3 +297,21 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   and no new texture appears with the wheel; most likely a font letter over the dark 32x32 disc c3527d3af978232e
   and a tinted ring. It already reads as a modern dark button, so it is left. Frame captures (ap.sh snap) do not
   work after the relaunch ("no capture appeared"), which is why it was not pinned down by draw.
+
+## Music, widescreen (2026-11-09)
+
+- Level music was silent the first time a track played: the game copies each track into the Z: cache as name.wma_
+  and renames it through the open handle (NtSetInformationFile class 10). Windows will not rename a file the CRT has
+  open, the rename failed, the copy stayed .wma_ and the music thread gave up. The rename now closes and reopens the
+  file. Tracks already cached as .wma played, which is why the menu music worked.
+- Widescreen (aspect 0, default): the projection was 4:3 (m11/m00 = 1.333) and the frame was stretched to 16:9.
+  0x323160 builds the projection and culling planes from the half angles at 0x6D75F0 (horizontal) and 0x6D75F4
+  (vertical; 0x323AE0 derives it from the 640x480 viewport). src/game/hooks.cpp widens 0x6D75F0 by
+  app::WideFactor (output aspect / 4:3, tan scaled) only while 0x323160 runs: Hor+ with matching culling. The frame
+  is shown at the output aspect (ShownAspect). HUD: screen space draws on the main target with every vertex at z 0
+  and less than 90% of the width wide get hud.x = 1 / WideFactor in the XYZRHW vertex shader (narrower about the
+  centre); full width ones (fades, loading pictures, movies) stay. This game leaves the depth test on for its HUD
+  (zfunc ALWAYS or LEQUAL), so z 0 is the test, not the depth state. aspect 1 = 4:3 pillarbox (the console is told
+  4:3), 2 = the old stretch.
+- The 4:3 render target is stretched: at 4K the 3D picture is 2880 wide; render scale 133% gives full width.
+- tools/ap_to_level.sh: the menu needs ~8 s after ap_to_menu or the first presses are lost.

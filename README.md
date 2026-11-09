@@ -22,8 +22,10 @@ Without a choice in IndyPort, the port also finds the game in an `assets` folder
 
 ### Display and performance
 - Fullscreen, borderless or windowed, at any resolution.
+- **Widescreen**: a wider view at your screen's shape (16:9, 21:9) with the menus and HUD kept in proportion, or
+  the original 4:3.
 - Render scale from 50% to 200% (supersampling above 100%).
-- Frame rate limit of 30, 60, 120, 144, your monitor's refresh rate or unlimited. The game keeps its speed at any
+- Frame rate limit of 30, 60, 120, 144, 165, 240, your monitor's refresh rate or unlimited. The game keeps its speed at any
   frame rate.
 - An FPS counter (F9 in the game toggles it).
 

@@ -271,6 +271,7 @@ struct Settings {
     int aniso = 16;
     int sharpen = 40;
     int draw_distance = 100;
+    int aspect = 0;  // 0 widescreen (wider view), 1 4:3, 2 stretched
     bool custom_textures = true;
     bool dump_textures = false;
     int dump_format = 0;
@@ -302,6 +303,7 @@ Settings LoadSettings() {
         s.aniso = int(t["anisotropic_filtering"].value_or(int64_t(16)));
         s.sharpen = std::clamp(int(t["sharpen"].value_or(int64_t(40))), 0, 100);
         s.draw_distance = std::clamp(int(t["draw_distance"].value_or(int64_t(100))), 25, 1000);
+        s.aspect = std::clamp(int(t["aspect"].value_or(int64_t(0))), 0, 2);
         s.custom_textures = t["custom_textures"].value_or(true);
         s.dump_textures = t["dump_textures"].value_or(false);
         s.dump_format = int(t["texture_dump_format"].value_or(int64_t(0)));
@@ -340,6 +342,7 @@ void SaveSettings(const Settings& s) {
     t.insert_or_assign("anisotropic_filtering", int64_t(s.aniso));
     t.insert_or_assign("sharpen", int64_t(s.sharpen));
     t.insert_or_assign("draw_distance", int64_t(s.draw_distance));
+    t.insert_or_assign("aspect", int64_t(s.aspect));
     t.insert_or_assign("custom_textures", s.custom_textures);
     t.insert_or_assign("dump_textures", s.dump_textures);
     t.insert_or_assign("texture_dump_format", int64_t(s.dump_format));
@@ -696,6 +699,10 @@ void FpsControl(Ui& ui, float w = 0) {
     if (Combo("##fps", &cur, names, w)) ui.s.fps_cap = caps[cur];
 }
 
+void AspectControl(Ui& ui, float w = 0) {
+    Combo("##aspect", &ui.s.aspect, {"Widescreen (fill the screen)", "4:3 (original)", "Stretched"}, w);
+}
+
 void ScaleControl(Ui& ui, float w = 0) { Slider("##scale", &ui.s.render_percent, 50, 200, 10, "%d%%", w); }
 
 void PageGraphics(Ui& ui) {
@@ -709,6 +716,10 @@ void PageGraphics(Ui& ui) {
     Row("Resolution");
     ResolutionControl(ui);
     Desc("The size of the game's picture. Desktop uses your monitor's current resolution.");
+    Row("Aspect ratio");
+    AspectControl(ui);
+    Desc("Widescreen shows a wider view of the game at your screen's shape (16:9, 21:9...) with the menus and HUD "
+         "kept in proportion. 4:3 is the Xbox picture with bars at the sides; Stretched pulls the 4:3 picture wide.");
     Row("VSync");
     Check("##vsync", &s.vsync);
     Desc("Waits for the monitor's refresh: no tearing. Off gives the lowest latency.");
@@ -1051,6 +1062,18 @@ void PageHome(Ui& ui, float banner_h) {
     ImGui::SameLine();
     cell(x1, "Render scale");
     ScaleControl(ui, cw);
+    cell(x0, "Aspect ratio");
+    AspectControl(ui, cw);
+    ImGui::SameLine();
+    cell(x1, "Draw distance");
+    {
+        const int values[] = {100, 150, 200, 300, 400};
+        std::vector<std::string> names = {"Original", "150%", "200%", "300%", "400%"};
+        int cur = 0;
+        for (int i = 0; i < 5; i++)
+            if (values[i] == ui.s.draw_distance) cur = i;
+        if (Combo("##ddq", &cur, names, cw)) ui.s.draw_distance = values[cur];
+    }
     cell(x0, "FPS counter");
     Check("##showfps", &ui.s.show_fps);
     ImGui::SameLine();

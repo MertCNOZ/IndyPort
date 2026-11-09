@@ -8,9 +8,9 @@ set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ap() { bash "$ROOT/tools/ap.sh" "$@" > /dev/null; }
 bash "$ROOT/tools/ap_to_menu.sh" menu > /dev/null
-sleep 3
+sleep 9          # the camera tour settles: a press during it is lost
 ap press start   # the menu list (cursor on New Game)
-sleep 2
+sleep 3
 ap press down    # Load Game
 sleep 1
 ap press a       # the save book
