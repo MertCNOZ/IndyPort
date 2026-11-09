@@ -315,3 +315,7 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   4:3), 2 = the old stretch.
 - The 4:3 render target is stretched: at 4K the 3D picture is 2880 wide; render scale 133% gives full width.
 - tools/ap_to_level.sh: the menu needs ~8 s after ap_to_menu or the first presses are lost.
+- Loading screens are the LevelTransitions WMVs (640x480 with letterbox bars, the map zooming to the level). The
+  movie filter (cubictap) now also sharpens at the movie's own scale: Catmull-Rom pushed away from the bilinear blend
+  of the 4 nearest texels, clamped to their range (no halos). A final-pass CAS cannot do this for a 6x frame.
+  Redrawing them (or shipping AI upscales) would copy the game's art, so it is not done.

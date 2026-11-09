@@ -618,7 +618,7 @@ index 3f9d4e7..7eed9f7 100644
               "%.1f read-backs %.1f late | %llu shaders %llu psos this second",
               p.draws / n, p.raw / n, p.verts / n / 1000.0, p.upload / n / 1048576.0, p.overflow / n, p.sigs / n,
 diff --git a/runtime/gpu/shaders.cpp b/runtime/gpu/shaders.cpp
-index 9ff7b67..77affe0 100644
+index 9ff7b67..b7cc2a6 100644
 --- a/runtime/gpu/shaders.cpp
 +++ b/runtime/gpu/shaders.cpp
 @@ -55,6 +55,7 @@ const char* kCommonTail = R"(    float4 spread[4];
@@ -637,7 +637,7 @@ index 9ff7b67..77affe0 100644
          if (t.flags & kTexWide) return F("spreadtap(tex%d, smp%d, %s, spread[%d], %s)", i, i, uv.c_str(), i, Hooks().ReadScale(t).c_str());
          return F("tex%d.Sample(smp%d, %s)", i, i, uv.c_str());
      };
-@@ -470,7 +472,19 @@ const char* kPsSbyte = R"(
+@@ -470,7 +472,30 @@ const char* kPsSbyte = R"(
  // unorm to byte b, less lo under 128 or hi from 128, over d
  float3 sbyte(float3 u, float lo, float hi, float d) { float3 b = u * 255; return (b - (b >= 128 ? hi : lo)) / d; }
  )";
@@ -648,17 +648,28 @@ index 9ff7b67..77affe0 100644
 +    float2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f)), w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
 +    float2 w2 = f * (0.5 + f * (2.0 - 1.5 * f)), w3 = f * f * (-0.5 + 0.5 * f);
 +    float2 w[4] = {w0, w1, w2, w3};
-+    float4 c = 0;
++    float4 c = 0, mn = 1, mx = 0, t00 = 0, t10 = 0, t01 = 0, t11 = 0;
 +    for (int y = 0; y < 4; y++)
-+        for (int x = 0; x < 4; x++)
-+            c += t.SampleLevel(s, (b + float2(x - 1, y - 1) + 0.5) / size, 0) * (w[x].x * w[y].y);
-+    return saturate(c);
++        for (int x = 0; x < 4; x++) {
++            float4 v = t.SampleLevel(s, (b + float2(x - 1, y - 1) + 0.5) / size, 0);
++            c += v * (w[x].x * w[y].y);
++            if (x == 1 && y == 1) t00 = v;
++            if (x == 2 && y == 1) t10 = v;
++            if (x == 1 && y == 2) t01 = v;
++            if (x == 2 && y == 2) t11 = v;
++        }
++    // sharpened at the movie's own scale: away from the bilinear blend of the 4 nearest texels, held between their
++    // least and greatest so edges get no halos (an unsharp mask a final pass at screen scale cannot give a 6x frame)
++    float4 bil = lerp(lerp(t00, t10, f.x), lerp(t01, t11, f.x), f.y);
++    mn = min(min(t00, t10), min(t01, t11));
++    mx = max(max(t00, t10), max(t01, t11));
++    return saturate(clamp(c + 1.0 * (c - bil), mn, mx));
 +}
 +float4 spreadtap(Texture2D t, SamplerState s, float2 uv, float4 w, float m) {
      float4 c = 0;
      int n = (int)w.z;
      for (int y = 0; y < n; y++)
-@@ -769,7 +783,8 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
+@@ -769,7 +794,8 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
      if (pretransformed) {
          s += "    float4 rhw = " + v(0, "float4(0,0,0,1)") + ";\n";
          s += "    float w = rhw.w == 0 ? 1 : 1 / rhw.w;\n";
@@ -668,7 +679,7 @@ index 9ff7b67..77affe0 100644
      } else {
          s += "    float4 ip = float4(" + v(0, "float4(0,0,0,1)") + ".xyz, 1);\n";
          s += "    float4 cp = mul(ip, wvp);\n";
-@@ -927,6 +942,8 @@ std::string PixelHlsl(const PixelKey& k) {
+@@ -927,6 +953,8 @@ std::string PixelHlsl(const PixelKey& k) {
              if (t.shadow)
                  body += F("float4 t%d = shadow(tex%d, smp%d, ", i, i, i) + TexUv(t, i, F("tc%d.xy / tc%d.w", i, i)) +
                          F(", tc%d.z / tc%d.w, %d, i.pos.xy, texsize[%d].xy);\n", i, i, t.shadow, i);
