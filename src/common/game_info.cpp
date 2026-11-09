@@ -22,18 +22,28 @@ uint32_t g_draw_distance = 100;               // percent of each level's far cli
 void AutopilotPad(int port, input::Pad& pad);
 void LoadPadMap(const void* table);  // pad_map.cpp
 void SavePadMap(void* table);
+void LoadKeys(const void* table);  // keyboard.cpp
+void SaveKeys(void* table);
+void MouseWindow(void* hwnd);
+bool MouseMessage(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result);
 void MapPad(int port, input::Pad& pad);
 
 // the settings file's extra keys: the gamepad mapping, and the modern button icons on unless the file says otherwise
 void Load(const void* table) {
     LoadPadMap(table);
+    LoadKeys(table);
     if (!static_cast<const toml::table*>(table)->contains("texture_packs")) app::Get().texture_packs = "modern_buttons";
 }
 
+void Save(void* table) {
+    SavePadMap(table);
+    SaveKeys(table);
+}
+
 // F9 turns the frame counter on and off for this run (the launcher's setting is what it starts with)
-bool Message(void*, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t*) {
+bool Message(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result) {
     if (msg == WM_KEYDOWN && wp == VK_F9 && !(lp & (1 << 30))) g_show_fps = !g_show_fps;
-    return false;
+    return MouseMessage(hwnd, msg, wp, lp, result);
 }
 
 // before the window and boot: guest threads on one core, the autopilot if INDY_AUTOPILOT is set
@@ -68,10 +78,10 @@ const app::GameInfo app::kGame = {
     .images = {{"default.xbe", "IndyET"}},  // each recompiled xbe and its exe, for title launches
     .options = {{"show_fps", &game::g_show_fps, nullptr}, {"draw_distance", nullptr, &game::g_draw_distance}},  // game settings kept in the settings file
     .load = game::Load,                   // reads more from the settings file's toml::table: pad_map
-    .save = game::SavePadMap,             // writes more into it
+    .save = game::Save,                   // writes more into it: pad_map, keys, mouse
     .init = game::Init,                   // after the settings load, before the window and boot
     .loaded = nullptr,                    // image in memory, before its entry point runs
-    .window = nullptr,                    // the game window is up
+    .window = game::MouseWindow,          // the game window is up: raw mouse input
     .message = game::Message,             // window messages first; true takes one
     .ui = game::FpsOverlay,               // ImGui drawing each frame: the frame counter
     .pad = game::Pad,                     // changes a polled pad: keyboard and autopilot drive port 0
