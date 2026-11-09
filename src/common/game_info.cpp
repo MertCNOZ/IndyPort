@@ -19,6 +19,15 @@ void StartFps();                              // fps.cpp
 void FpsOverlay(double fps);                  // fps.cpp
 extern bool g_show_fps;                       // fps.cpp
 uint32_t g_draw_distance = 100;               // percent of each level's far clip (src/game/hooks.cpp)
+uint32_t g_fov = 100;                         // percent of the game's field of view (src/game/hooks.cpp)
+uint32_t g_rumble = 100;                      // percent of the game's rumble
+
+// the controller's rumble scaled by the rumble setting
+void Rumble(int, uint16_t& left, uint16_t& right) {
+    if (g_rumble >= 100) return;
+    left = uint16_t(uint32_t(left) * g_rumble / 100);
+    right = uint16_t(uint32_t(right) * g_rumble / 100);
+}
 void AutopilotPad(int port, input::Pad& pad);
 void LoadPadMap(const void* table);  // pad_map.cpp
 void SavePadMap(void* table);
@@ -76,7 +85,8 @@ const app::GameInfo app::kGame = {
     .missing = L"The game was not found. Open IndyPort.exe and choose your disc image (.iso) or the folder of the "
                L"extracted game (with default.xbe), or put either in the assets folder beside the game.",
     .images = {{"default.xbe", "IndyET"}},  // each recompiled xbe and its exe, for title launches
-    .options = {{"show_fps", &game::g_show_fps, nullptr}, {"draw_distance", nullptr, &game::g_draw_distance}},  // game settings kept in the settings file
+    .options = {{"show_fps", &game::g_show_fps, nullptr}, {"draw_distance", nullptr, &game::g_draw_distance},
+                {"fov", nullptr, &game::g_fov}, {"rumble", nullptr, &game::g_rumble}},  // game settings kept in the settings file
     .load = game::Load,                   // reads more from the settings file's toml::table: pad_map
     .save = game::Save,                   // writes more into it: pad_map, keys, mouse
     .init = game::Init,                   // after the settings load, before the window and boot
@@ -85,5 +95,5 @@ const app::GameInfo app::kGame = {
     .message = game::Message,             // window messages first; true takes one
     .ui = game::FpsOverlay,               // ImGui drawing each frame: the frame counter
     .pad = game::Pad,                     // changes a polled pad: keyboard and autopilot drive port 0
-    .rumble = nullptr,                    // changes a rumble before it is set
+    .rumble = game::Rumble,                   // changes a rumble before it is set
 };

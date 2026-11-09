@@ -290,6 +290,9 @@ struct Settings {
     int draw_distance = 100;
     int aspect = 0;  // 0 widescreen (wider view), 1 4:3, 2 stretched
     bool full_width = true;
+    int fov = 100;
+    bool fxaa = false;
+    int rumble = 100;
     bool custom_textures = true;
     bool dump_textures = false;
     int dump_format = 0;
@@ -327,6 +330,9 @@ Settings LoadSettings() {
         s.draw_distance = std::clamp(int(t["draw_distance"].value_or(int64_t(100))), 25, 1000);
         s.aspect = std::clamp(int(t["aspect"].value_or(int64_t(0))), 0, 2);
         s.full_width = t["full_width"].value_or(true);
+        s.fov = std::clamp(int(t["fov"].value_or(int64_t(100))), 70, 140);
+        s.fxaa = t["fxaa"].value_or(false);
+        s.rumble = std::clamp(int(t["rumble"].value_or(int64_t(100))), 0, 100);
         s.custom_textures = t["custom_textures"].value_or(true);
         s.dump_textures = t["dump_textures"].value_or(false);
         s.dump_format = int(t["texture_dump_format"].value_or(int64_t(0)));
@@ -383,6 +389,9 @@ void SaveSettings(const Settings& s) {
     t.insert_or_assign("draw_distance", int64_t(s.draw_distance));
     t.insert_or_assign("aspect", int64_t(s.aspect));
     t.insert_or_assign("full_width", s.full_width);
+    t.insert_or_assign("fov", int64_t(s.fov));
+    t.insert_or_assign("fxaa", s.fxaa);
+    t.insert_or_assign("rumble", int64_t(s.rumble));
     t.insert_or_assign("custom_textures", s.custom_textures);
     t.insert_or_assign("dump_textures", s.dump_textures);
     t.insert_or_assign("texture_dump_format", int64_t(s.dump_format));
@@ -807,6 +816,12 @@ void PageGraphics(Ui& ui) {
     }
     Desc("How far each level draws. The game cuts the view off at each level's own distance (Ceylon: 5555 units); "
          "longer distances show more of large outdoor areas at a small cost. Applied when a level loads.");
+    Row("Field of view");
+    Slider("##fov", &s.fov, 70, 140, 5, "%d%%");
+    Desc("How wide the camera sees, as a share of the game's own view (100%). Wider shows more around Indy.");
+    Row("Anti-aliasing (FXAA)");
+    Check("##fxaa", &s.fxaa);
+    Desc("Smooths jagged edges at almost no cost. It softens textures a little; sharpening makes up for it.");
     Row("Sharpening");
     Slider("##sharpen", &s.sharpen, 0, 100, 5, "%d%%");
     Desc("Contrast adaptive sharpening of the final picture: the game's low resolution textures look crisper, "
@@ -987,6 +1002,9 @@ void PageControls(Ui& ui) {
     }
     Desc("Modern Xbox shows today's controller buttons (LB and RB for White and Black, LT, RT, LS, RS) in the "
          "game's prompts and menus, drawn sharp for high resolutions. Applied when the game starts.");
+    Row("Vibration");
+    Slider("##rumble", &ui.s.rumble, 0, 100, 5, "%d%%");
+    Desc("Strength of the controller's vibration; 0% turns it off.");
     Heading("GAMEPAD MAPPING");
     Desc("Which button of your controller presses each button of the game's Xbox controller. The game's Black and "
          "White buttons are RB and LB by default. Applied when the game starts.");

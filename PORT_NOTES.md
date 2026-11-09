@@ -353,3 +353,12 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
 - IndyPort Controls: mouse look, sensitivity, invert, two slots per action (click then press a key / mouse button /
   wheel; right click clears), reset. Tested with tools/clickat.ps1 (real clicks; its Y is the window image's, which
   lands one row higher: the title bar is not counted).
+
+## Extras (2026-11-09)
+
+- fov (70-140%, a GameInfo option): the 0x323160 hook scales the tangents of both half angles (0x6D75F0 and
+  0x6D75F4) on top of the widescreen factor. 120% checked at the menu.
+- rumble (0-100%): GameInfo rumble hook scales both motors.
+- fxaa (default off): classic PC FXAA in the final blit (kBlitHlsl, opts2.y), before the sharpening.
+- Skip intro: not done. The logo movies are not opened through NtCreateFile/NtOpenFile (no open in the log while
+  they play), so there is no file to hide; they can be skipped with a button press anyway.
