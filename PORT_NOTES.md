@@ -339,3 +339,17 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   exes, compiler without work, textures\packs, empty assets, VC runtime, README). Clean install test (unzipped
   outside the repo, game_path to the xiso): the game code built on first start in ~35 s, the game ran from the ISO
   with the modern_buttons pack.
+
+## Keyboard and mouse (2026-11-09)
+
+- The game's own layout (Options, Controls, Configuration 1): A Attack 2, B Jump/swim, X Attack 1, Y Action,
+  Black Draw/pack, White Reload, LT First person, RT Guard mode, d-pad up Open/draw item, down Close/pack, left and
+  right scroll items, right stick Camera/rope, Start Pause, Back Back.
+- src/common/keyboard.cpp: settings keys = 24 pairs (16 buttons in pad_map order, left stick U D L R, right stick U
+  D L R), Windows virtual keys incl. mouse buttons, 0x100/0x101 wheel up/down (a notch is a 90 ms press). Mouse
+  look: raw input (registered in the GameInfo window hook), speed smoothed over ~30 ms, past a 0.22 dead zone,
+  1500 counts/s full at sensitivity 50; cursor hidden (WM_SETCURSOR) and clipped while focused. Tested with
+  tools/sendinput.ps1: 500 counts right turned the camera right ~90 deg, W walked forward.
+- IndyPort Controls: mouse look, sensitivity, invert, two slots per action (click then press a key / mouse button /
+  wheel; right click clears), reset. Tested with tools/clickat.ps1 (real clicks; its Y is the window image's, which
+  lands one row higher: the title bar is not counted).

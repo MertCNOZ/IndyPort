@@ -62,6 +62,7 @@ constexpr ImU32 kPlay = IM_COL32(176, 88, 20, 255);
 constexpr ImU32 kGood = IM_COL32(130, 200, 110, 255);
 constexpr ImU32 kBad = IM_COL32(236, 110, 90, 255);
 
+std::atomic<int> g_wheel_seen{0};  // a wheel turn while a key binding waits (WndProc)
 ImFont* g_font = nullptr;        // text
 ImFont* g_font_head = nullptr;   // section headings
 ImFont* g_font_nav = nullptr;    // sidebar pages
@@ -253,10 +254,26 @@ std::wstring PickFolder(HWND owner) {
 // the gamepad mapping: for each button of the Xbox controller the game reads, the button of a modern controller
 // that presses it (the order of src/common/pad_map.cpp)
 constexpr std::array<int, 16> kDefaultPadMap = {0, 1, 2, 3, 5, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-const char* kGameButtons[16] = {"A",          "B",           "X",           "Y",
-                                "Black",      "White",       "Left trigger", "Right trigger",
-                                "D-pad up",   "D-pad down",  "D-pad left",  "D-pad right",
-                                "Start",      "Back",        "Left stick click", "Right stick click"};
+// the game's buttons with what they do in its first controller layout (Options, Controls, Configuration 1)
+const char* kGameButtons[16] = {"A: Attack 2",          "B: Jump / swim",        "X: Attack 1",
+                                "Y: Action",            "Black: Draw / pack",    "White: Reload",
+                                "LT: First person",     "RT: Guard mode",        "Up: Open / draw item",
+                                "Down: Close / pack item", "Left: Previous item", "Right: Next item",
+                                "Start: Pause",         "Back: Back",            "Left stick click",
+                                "Right stick click"};
+// keyboard and mouse bindings (src/common/keyboard.cpp): the 16 buttons, then the left and right stick directions;
+// a Windows virtual key, 0x100 / 0x101 the wheel, 0 none
+constexpr int kKeyActions = 24;
+constexpr int kWheelUp = 0x100, kWheelDown = 0x101;
+using KeyBindings = std::array<std::array<int, 2>, kKeyActions>;
+constexpr KeyBindings kDefaultKeys = {{{'Q', VK_RETURN}, {VK_SPACE, VK_BACK}, {VK_LBUTTON, 0}, {'E', 0},
+                                      {'G', 0}, {'R', 0}, {'F', 0}, {VK_RBUTTON, 0},
+                                      {VK_UP, '1'}, {VK_DOWN, '2'}, {VK_LEFT, kWheelUp}, {VK_RIGHT, kWheelDown},
+                                      {VK_ESCAPE, 0}, {VK_TAB, 0}, {'V', 0}, {VK_MBUTTON, 0},
+                                      {'W', 0}, {'S', 0}, {'A', 0}, {'D', 0},
+                                      {'I', 0}, {'K', 0}, {'J', 0}, {'L', 0}}};
+const char* kStickActions[8] = {"Move forward", "Move back", "Move left", "Move right",
+                                "Camera up",    "Camera down", "Camera left", "Camera right"};
 const char* kControllerButtons[16] = {"A",       "B",          "X",          "Y",
                                       "LB",      "RB",         "LT",         "RT",
                                       "D-pad up", "D-pad down", "D-pad left", "D-pad right",
@@ -281,7 +298,11 @@ struct Settings {
     bool video_filter = true;
     std::string game_path;
     std::string texture_packs = "modern_buttons";  // built-in packs; modern_buttons: the modern Xbox icons
-    std::array<int, 16> pad_map = kDefaultPadMap;  // game button -> controller button, -1 none (pad_map.cpp)
+    std::array<int, 16> pad_map = kDefaultPadMap;
+    KeyBindings keys = kDefaultKeys;
+    bool mouse_look = true;
+    int mouse_sensitivity = 50;
+    bool mouse_invert_y = false;  // game button -> controller button, -1 none (pad_map.cpp)
     bool operator==(const Settings&) const = default;
 };
 
@@ -314,6 +335,22 @@ Settings LoadSettings() {
         s.video_filter = t["video_filter"].value_or(true);
         s.game_path = t["game_path"].value_or(std::string());
         s.texture_packs = t["texture_packs"].value_or(s.texture_packs);
+        if (const toml::array* a = t["keys"].as_array(); a && a->size() == kKeyActions) {
+            KeyBindings k{};
+            bool ok = true;
+            for (size_t i = 0; i < kKeyActions && ok; i++) {
+                const toml::array* pair = (*a)[i].as_array();
+                ok = pair && pair->size() == 2;
+                for (size_t j = 0; ok && j < 2; j++) {
+                    k[i][j] = int((*pair)[j].value_or(int64_t(-1)));
+                    ok = k[i][j] >= 0 && k[i][j] <= kWheelDown;
+                }
+            }
+            if (ok) s.keys = k;
+        }
+        s.mouse_look = t["mouse_look"].value_or(true);
+        s.mouse_sensitivity = std::clamp(int(t["mouse_sensitivity"].value_or(int64_t(50))), 1, 100);
+        s.mouse_invert_y = t["mouse_invert_y"].value_or(false);
         if (const toml::array* a = t["pad_map"].as_array(); a && a->size() == 16) {
             std::array<int, 16> m{};
             bool ok = true;
@@ -357,6 +394,12 @@ void SaveSettings(const Settings& s) {
     toml::array map;
     for (int v : s.pad_map) map.push_back(int64_t(v));
     t.insert_or_assign("pad_map", std::move(map));
+    toml::array keys;
+    for (const auto& pair : s.keys) keys.push_back(toml::array{int64_t(pair[0]), int64_t(pair[1])});
+    t.insert_or_assign("keys", std::move(keys));
+    t.insert_or_assign("mouse_look", s.mouse_look);
+    t.insert_or_assign("mouse_sensitivity", int64_t(s.mouse_sensitivity));
+    t.insert_or_assign("mouse_invert_y", s.mouse_invert_y);
     std::ofstream out(SettingsFile());
     out << t << "\n";
 }
@@ -649,6 +692,8 @@ struct Ui {
     std::string message;
     double message_until = 0;
     HWND window = nullptr;
+    int capture = -1;  // the key binding slot waiting for a key (action * 2 + slot)
+    std::array<bool, 256> capture_held{};
 };
 
 void Note(Ui& ui, std::string m) {
@@ -881,6 +926,56 @@ void ButtonGlyph(int button) {
     d->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32(230, 230, 232, 255), t);
 }
 
+// a binding's name: the mouse's own, else the keyboard layout's name for the key
+std::string KeyName(int vk) {
+    switch (vk) {
+        case 0: return "-";
+        case VK_LBUTTON: return "Left mouse";
+        case VK_RBUTTON: return "Right mouse";
+        case VK_MBUTTON: return "Middle mouse";
+        case VK_XBUTTON1: return "Mouse 4";
+        case VK_XBUTTON2: return "Mouse 5";
+        case kWheelUp: return "Wheel up";
+        case kWheelDown: return "Wheel down";
+        default: break;
+    }
+    UINT sc = MapVirtualKeyW(UINT(vk), MAPVK_VK_TO_VSC);
+    bool extended = vk == VK_UP || vk == VK_DOWN || vk == VK_LEFT || vk == VK_RIGHT || vk == VK_INSERT ||
+                    vk == VK_DELETE || vk == VK_HOME || vk == VK_END || vk == VK_PRIOR || vk == VK_NEXT ||
+                    vk == VK_RCONTROL || vk == VK_RMENU || vk == VK_DIVIDE;
+    wchar_t name[64] = {};
+    if (sc && GetKeyNameTextW(LONG(sc << 16 | (extended ? 1 << 24 : 0)), name, 64) > 0) return Utf8(name);
+    char hex[16];
+    std::snprintf(hex, sizeof(hex), "Key %02X", vk);
+    return hex;
+}
+
+// waiting for a key for a binding slot: the keys held when it starts do not count (the click that started it)
+void StartCapture(Ui& ui, int slot) {
+    ui.capture = slot;
+    for (int vk = 1; vk < 255; vk++) ui.capture_held[size_t(vk)] = (GetAsyncKeyState(vk) & 0x8000) != 0;
+    g_wheel_seen = 0;
+}
+
+void PollCapture(Ui& ui) {
+    if (ui.capture < 0) return;
+    int got = 0;
+    if (int w = g_wheel_seen.exchange(0)) got = w > 0 ? kWheelUp : kWheelDown;
+    for (int vk = 1; vk < 255 && !got; vk++) {
+        bool down = (GetAsyncKeyState(vk) & 0x8000) != 0;
+        if (!down) {
+            ui.capture_held[size_t(vk)] = false;
+            continue;
+        }
+        // the generic shift / control / alt codes come with their left or right one: take the side
+        if (ui.capture_held[size_t(vk)] || vk == VK_SHIFT || vk == VK_CONTROL || vk == VK_MENU) continue;
+        got = vk;
+    }
+    if (!got) return;
+    ui.s.keys[size_t(ui.capture / 2)][size_t(ui.capture % 2)] = got;
+    ui.capture = -1;
+}
+
 void PageControls(Ui& ui) {
     PageTitle("CONTROLS", "Gamepad mapping, controllers and the keyboard.");
     Heading("BUTTON ICONS");
@@ -939,27 +1034,40 @@ void PageControls(Ui& ui) {
     }
     SDL_free(pads);
 
-    Heading("KEYBOARD");
-    const char* rows[][2] = {{"Move", "W A S D"},
-                             {"Camera", "I J K L"},
-                             {"D-pad", "Arrow keys"},
-                             {"A", "Space or Enter"},
-                             {"B", "Q or Backspace"},
-                             {"X", "E"},
-                             {"Y", "R"},
-                             {"Start", "Enter"},
-                             {"Back", "Tab"},
-                             {"Left / right trigger", "Left Shift / Left Ctrl"},
-                             {"Black / white", "C / Z"},
-                             {"Left / right stick click", "V / B"},
-                             {"FPS counter", "F9"}};
-    for (auto& r : rows) {
-        Row(r[0]);
-        ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(r[1]);
-        ImGui::PopStyleColor();
+    Heading("KEYBOARD AND MOUSE");
+    Row("Mouse look");
+    Check("##mlook", &ui.s.mouse_look);
+    Desc("The mouse turns the camera. The cursor is hidden and kept inside the game window while it has focus.");
+    if (ui.s.mouse_look) {
+        Row("Mouse sensitivity");
+        Slider("##msens", &ui.s.mouse_sensitivity, 1, 100, 1, "%d");
+        Desc(nullptr);
+        Row("Invert vertical");
+        Check("##minv", &ui.s.mouse_invert_y);
+        Desc(nullptr);
     }
+    Desc("Click a slot, then press a key, a mouse button or turn the wheel. Right click a slot to clear it. "
+         "Applied when the game starts. F9 in the game shows the frame counter.");
+    for (int i = 0; i < kKeyActions; i++) {
+        Row(i < 16 ? kGameButtons[i] : kStickActions[i - 16]);
+        for (int j = 0; j < 2; j++) {
+            ImGui::PushID(1000 + i * 2 + j);
+            bool waiting = ui.capture == i * 2 + j;
+            std::string label = waiting ? std::string("Press a key...") : KeyName(ui.s.keys[size_t(i)][size_t(j)]);
+            if (waiting) ImGui::PushStyleColor(ImGuiCol_Button, kPlay);
+            if (Button(label.c_str(), ImGui::GetFontSize() * 9)) StartCapture(ui, i * 2 + j);
+            if (waiting) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) ui.s.keys[size_t(i)][size_t(j)] = 0;
+            ImGui::PopID();
+            if (j == 0) ImGui::SameLine();
+        }
+    }
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::SetCursorPosX(g_col);
+    ImGui::BeginDisabled(ui.s.keys == kDefaultKeys);
+    if (Button("Reset keyboard and mouse", ImGui::GetFontSize() * 14)) ui.s.keys = kDefaultKeys;
+    ImGui::EndDisabled();
+    Desc(nullptr);
 }
 
 void PageSaves(Ui& ui) {
@@ -1282,6 +1390,9 @@ static LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g_resize_h = HIWORD(lp);
             }
             return 0;
+        case WM_MOUSEWHEEL:
+            g_wheel_seen = GET_WHEEL_DELTA_WPARAM(wp);
+            break;
         case WM_GETMINMAXINFO: {
             UINT dpi = GetDpiForWindow(hwnd);
             if (!dpi) dpi = 96;
@@ -1378,11 +1489,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
+        // a key binding waiting for its key takes every key, Escape included
+        bool capturing = ui.capture >= 0;
+        PollCapture(ui);
+        if (ui.page != Page::Controls) ui.capture = -1;
         // pages with LB / RB, Home with B or Escape, Play with Start
-        bool popup = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
+        bool popup = capturing || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
         int count = int(Page::Count), p = int(ui.page);
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1)) ui.page = Page((p + count - 1) % count);
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1)) ui.page = Page((p + 1) % count);
+        if (!capturing && ImGui::IsKeyPressed(ImGuiKey_GamepadL1)) ui.page = Page((p + count - 1) % count);
+        if (!capturing && ImGui::IsKeyPressed(ImGuiKey_GamepadR1)) ui.page = Page((p + 1) % count);
         if (!popup && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight) || ImGui::IsKeyPressed(ImGuiKey_Escape)))
             ui.page = Page::Home;
         if (front && !popup && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) &&
