@@ -6,11 +6,12 @@
 // Windows virtual key (the mouse buttons are virtual keys too), 0x100 / 0x101 the mouse wheel up / down, 0 none.
 // The defaults follow the game's first controller layout: WASD moves, the mouse turns the camera, the left button
 // is Attack 1, the right one Guard mode, Space jumps, E is Action, Q Attack 2, R Reload, G Draw / Pack, F First
-// person, the wheel scrolls the items, Esc pauses; Enter and Backspace are A and B in the menus.
+// person, the wheel scrolls the items, Esc pauses; Enter is A and Start (the title screen wants Start), Backspace
+// is B in the menus.
 //
-// Mouse look: raw mouse movement turned into the right stick. The movement's speed (smoothed over about 30 ms, so
-// the game's polls in a frame all see it) sets how far the stick is pushed, past the game's dead zone, so the camera
-// turns as fast as the mouse moves. While the game has focus the cursor is hidden and kept inside the window.
+// Mouse look: raw mouse movement turned into the right stick. The movement's speed (smoothed over only 8 ms, about
+// a frame, so polls close together share it without lag) sets how far the stick is pushed, past the game's dead
+// zone, so the camera turns as fast as the mouse moves. While the game has focus the cursor is hidden and kept inside the window.
 #define NOMINMAX
 #include <windows.h>
 
@@ -38,7 +39,7 @@ using Bindings = std::array<std::array<uint32_t, 2>, kActions>;
 constexpr Bindings kDefaults = {{{'Q', VK_RETURN},       {VK_SPACE, VK_BACK}, {VK_LBUTTON, 0}, {'E', 0},
                                  {'G', 0},               {'R', 0},            {'F', 0},        {VK_RBUTTON, 0},
                                  {VK_UP, '1'},           {VK_DOWN, '2'},      {VK_LEFT, kWheelUp}, {VK_RIGHT, kWheelDown},
-                                 {VK_ESCAPE, 0},         {VK_TAB, 0},         {'V', 0},        {VK_MBUTTON, 0},
+                                 {VK_ESCAPE, VK_RETURN}, {VK_TAB, 0},         {'V', 0},        {VK_MBUTTON, 0},
                                  {'W', 0},               {'S', 0},            {'A', 0},        {'D', 0},
                                  {'I', 0},               {'K', 0},            {'J', 0},        {'L', 0}}};
 
@@ -144,6 +145,8 @@ void LoadKeys(const void* table) {
         }
         if (ok) g_keys = k;
     }
+    // keys_version 2: Enter presses Start too. A file from before gets it in Start's second slot when that is free
+    if (!t.contains("keys_version") && !g_keys[12][1] && g_keys[12][0] != VK_RETURN) g_keys[12][1] = VK_RETURN;
     g_mouse_look = t["mouse_look"].value_or(g_mouse_look);
     g_mouse_sens = std::clamp(uint32_t(t["mouse_sensitivity"].value_or(int64_t(g_mouse_sens))), 1u, 100u);
     g_mouse_invert = t["mouse_invert_y"].value_or(g_mouse_invert);
@@ -154,6 +157,7 @@ void SaveKeys(void* table) {
     for (const auto& pair : g_keys) a.push_back(toml::array{int64_t(pair[0]), int64_t(pair[1])});
     auto& t = *static_cast<toml::table*>(table);
     t.insert_or_assign("keys", std::move(a));
+    t.insert_or_assign("keys_version", int64_t(2));
     t.insert_or_assign("mouse_look", g_mouse_look);
     t.insert_or_assign("mouse_sensitivity", int64_t(g_mouse_sens));
     t.insert_or_assign("mouse_invert_y", g_mouse_invert);
@@ -243,7 +247,7 @@ void KeyboardPad(int port, input::Pad& pad) {
     float dt = std::clamp(std::chrono::duration<float>(now - last).count(), 1e-4f, 0.1f);
     last = now;
     float mx = float(g_dx.exchange(0)) / dt, my = float(g_dy.exchange(0)) / dt;
-    float k = std::min(1.0f, dt / 0.03f);
+    float k = std::min(1.0f, dt / 0.008f);
     vx += (mx - vx) * k;
     vy += (my - vy) * k;
     float sx = StickFromSpeed(vx), sy = StickFromSpeed(vy) * (g_mouse_invert ? 1.0f : -1.0f);

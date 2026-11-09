@@ -269,7 +269,7 @@ using KeyBindings = std::array<std::array<int, 2>, kKeyActions>;
 constexpr KeyBindings kDefaultKeys = {{{'Q', VK_RETURN}, {VK_SPACE, VK_BACK}, {VK_LBUTTON, 0}, {'E', 0},
                                       {'G', 0}, {'R', 0}, {'F', 0}, {VK_RBUTTON, 0},
                                       {VK_UP, '1'}, {VK_DOWN, '2'}, {VK_LEFT, kWheelUp}, {VK_RIGHT, kWheelDown},
-                                      {VK_ESCAPE, 0}, {VK_TAB, 0}, {'V', 0}, {VK_MBUTTON, 0},
+                                      {VK_ESCAPE, VK_RETURN}, {VK_TAB, 0}, {'V', 0}, {VK_MBUTTON, 0},
                                       {'W', 0}, {'S', 0}, {'A', 0}, {'D', 0},
                                       {'I', 0}, {'K', 0}, {'J', 0}, {'L', 0}}};
 const char* kStickActions[8] = {"Move forward", "Move back", "Move left", "Move right",
@@ -330,7 +330,7 @@ Settings LoadSettings() {
         s.draw_distance = std::clamp(int(t["draw_distance"].value_or(int64_t(100))), 25, 1000);
         s.aspect = std::clamp(int(t["aspect"].value_or(int64_t(0))), 0, 2);
         s.full_width = t["full_width"].value_or(true);
-        s.fov = std::clamp(int(t["fov"].value_or(int64_t(100))), 70, 140);
+        s.fov = std::clamp(int(t["fov"].value_or(int64_t(100))), 70, 120);
         s.fxaa = t["fxaa"].value_or(false);
         s.rumble = std::clamp(int(t["rumble"].value_or(int64_t(100))), 0, 100);
         s.custom_textures = t["custom_textures"].value_or(true);
@@ -354,6 +354,9 @@ Settings LoadSettings() {
             }
             if (ok) s.keys = k;
         }
+        // keys_version 2: Enter presses Start too (the title screen), added to a file from before when Start's
+        // second slot is free
+        if (!t.contains("keys_version") && !s.keys[12][1] && s.keys[12][0] != VK_RETURN) s.keys[12][1] = VK_RETURN;
         s.mouse_look = t["mouse_look"].value_or(true);
         s.mouse_sensitivity = std::clamp(int(t["mouse_sensitivity"].value_or(int64_t(50))), 1, 100);
         s.mouse_invert_y = t["mouse_invert_y"].value_or(false);
@@ -406,6 +409,7 @@ void SaveSettings(const Settings& s) {
     toml::array keys;
     for (const auto& pair : s.keys) keys.push_back(toml::array{int64_t(pair[0]), int64_t(pair[1])});
     t.insert_or_assign("keys", std::move(keys));
+    t.insert_or_assign("keys_version", int64_t(2));
     t.insert_or_assign("mouse_look", s.mouse_look);
     t.insert_or_assign("mouse_sensitivity", int64_t(s.mouse_sensitivity));
     t.insert_or_assign("mouse_invert_y", s.mouse_invert_y);
@@ -757,7 +761,7 @@ void FpsControl(Ui& ui, float w = 0) {
 }
 
 void AspectControl(Ui& ui, float w = 0) {
-    Combo("##aspect", &ui.s.aspect, {"Widescreen (fill the screen)", "4:3 (original)", "Stretched"}, w);
+    Combo("##aspect", &ui.s.aspect, {"16:9", "4:3", "Stretched"}, w);
 }
 
 void ScaleControl(Ui& ui, float w = 0) { Slider("##scale", &ui.s.render_percent, 50, 200, 10, "%d%%", w); }
@@ -775,13 +779,14 @@ void PageGraphics(Ui& ui) {
     Desc("The size of the game's picture. Desktop uses your monitor's current resolution.");
     Row("Aspect ratio");
     AspectControl(ui);
-    Desc("Widescreen shows a wider view of the game at your screen's shape (16:9, 21:9...) with the menus and HUD "
-         "kept in proportion. 4:3 is the Xbox picture with bars at the sides; Stretched pulls the 4:3 picture wide.");
+    Desc("16:9 shows a wider view of the game with the menus and HUD kept in proportion (on a wider monitor, such as "
+         "21:9, it follows the monitor). 4:3 is the Xbox picture with bars at the sides; Stretched pulls the 4:3 "
+         "picture wide.");
     if (s.aspect == 0) {
         Row("Full width detail");
         Check("##fullw", &s.full_width);
-        Desc("Widescreen draws the game wider than the Xbox did, so the picture keeps full detail across the screen. "
-             "Off draws it 4:3 and widens it, a little softer and a little faster.");
+        Desc("Draws the game as wide as the screen, so 100% render scale is the screen's full resolution. Off draws it "
+             "4:3 and widens it: a little softer, a little faster.");
     }
     Row("VSync");
     Check("##vsync", &s.vsync);
@@ -817,7 +822,7 @@ void PageGraphics(Ui& ui) {
     Desc("How far each level draws. The game cuts the view off at each level's own distance (Ceylon: 5555 units); "
          "longer distances show more of large outdoor areas at a small cost. Applied when a level loads.");
     Row("Field of view");
-    Slider("##fov", &s.fov, 70, 140, 5, "%d%%");
+    Slider("##fov", &s.fov, 70, 120, 5, "%d%%");
     Desc("How wide the camera sees, as a share of the game's own view (100%). Wider shows more around Indy.");
     Row("Anti-aliasing (FXAA)");
     Check("##fxaa", &s.fxaa);

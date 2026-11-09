@@ -42,7 +42,7 @@ X86_EXTERN_FUNC(__imp__sub_00323160);
 // The fov setting widens or narrows both half angles alike (their tangents scaled), on top of the widescreen.
 X86_FUNC(sub_00323160) {
     float k = app::WideFactor();
-    float f = float(std::clamp(game::g_fov, 70u, 140u)) / 100.0f;
+    float f = float(std::clamp(game::g_fov, 70u, 120u)) / 100.0f;
     float h = X86_MEMF32(0x6D75F0), v = X86_MEMF32(0x6D75F4);
     bool widen = (k > 1.01f || std::fabs(f - 1) > 0.001f) && h > 0.05f && h < 1.5f && v > 0.05f && v < 1.5f;
     static bool told = false;
