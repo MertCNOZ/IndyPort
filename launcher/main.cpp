@@ -45,7 +45,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr const char* kVersion = "0.3.0";
+constexpr const char* kVersion = "0.4.0";
 constexpr const wchar_t* kGameExe = L"IndyET.exe";
 constexpr const char* kTitleId = "4c410007";
 
