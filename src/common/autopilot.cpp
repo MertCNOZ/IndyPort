@@ -6,15 +6,22 @@
 //   hold <button> <seconds>            hold it
 //   stick <l|r> <x> <y> <seconds>      tilt a stick, x and y from -1 to 1, y up
 //   capture                            save the next frame under XBE_CAPTURE_DIR (as F3 does)
+//   find <text>                        log where the text is in guest memory, as ASCII and UTF-16
+//   peek <hex address> [bytes]         log guest memory there
 //   # ...                              comment
 //
 // buttons: a b x y black white lt rt start back up down left right lthumb rthumb
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <mutex>
 #include <sstream>
@@ -25,6 +32,7 @@
 #include "core/input.h"
 #include "core/log.h"
 #include "gpu/backend.h"
+#include "kernel/kernel.h"
 
 namespace game {
 
@@ -64,6 +72,54 @@ bool Button(const std::string& name, Action& a) {
     return false;
 }
 
+// committed guest memory only: the 64 MB has reserved holes
+bool Readable(uint32_t addr) {
+    MEMORY_BASIC_INFORMATION mi{};
+    if (!VirtualQuery(kernel::g_base + addr, &mi, sizeof(mi))) return false;
+    return mi.State == MEM_COMMIT && !(mi.Protect & (PAGE_NOACCESS | PAGE_GUARD));
+}
+
+// every place the text is, as ASCII and as UTF-16, logged (the first 60)
+int FindText(const std::string& text) {
+    if (text.empty() || !kernel::g_base) return 0;
+    std::string wide;
+    for (char ch : text) {
+        wide += ch;
+        wide += '\0';
+    }
+    int found = 0;
+    for (uint32_t page = 0x10000; page < 0x4000000 && found < 60; page += 0x1000) {
+        if (!Readable(page)) continue;
+        const uint8_t* p = kernel::g_base + page;
+        for (const std::string* t : {&text, static_cast<const std::string*>(&wide)})
+            for (uint32_t o = 0; o + t->size() <= 0x1000 && found < 60; o++)
+                if (std::memcmp(p + o, t->data(), t->size()) == 0) {
+                    LOGR("find: %08X %s", page + o, t == &text ? "ascii" : "utf-16");
+                    found++;
+                }
+    }
+    return found;
+}
+
+void Peek(uint32_t addr, uint32_t n) {
+    if (!kernel::g_base || !Readable(addr) || !Readable(addr + n - 1)) {
+        LOGR("peek: %08X not readable", addr);
+        return;
+    }
+    std::string line;
+    char buf[8];
+    for (uint32_t i = 0; i < n; i++) {
+        if (i % 16 == 0) {
+            if (!line.empty()) LOGR("peek: %s", line.c_str());
+            std::snprintf(buf, sizeof(buf), "%06X", addr + i);
+            line = std::string(buf) + ":";
+        }
+        std::snprintf(buf, sizeof(buf), " %02X", kernel::g_base[addr + i]);
+        line += buf;
+    }
+    LOGR("peek: %s", line.c_str());
+}
+
 std::string Run(const std::string& line) {
     std::istringstream in(line);
     std::string cmd;
@@ -88,6 +144,15 @@ std::string Run(const std::string& line) {
     } else if (cmd == "capture") {
         gpu::g_capture = true;
         return "ok capture";
+    } else if (cmd == "find") {
+        std::string text;
+        std::getline(in >> std::ws, text);
+        return "ok find " + std::to_string(FindText(text)) + " places (in the log)";
+    } else if (cmd == "peek") {
+        uint32_t addr = 0, n = 64;
+        in >> std::hex >> addr >> std::dec >> n;
+        Peek(addr, std::min(n, 512u));
+        return "ok peek (in the log)";
     } else {
         return "error: unknown command " + cmd;
     }
