@@ -332,3 +332,6 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   and CopyByRegion rects; TargetScale (points, the half pixel shift), the wide-tap factor and the slope bias use the
   vertical scale. Targets are remade when the factor changes (ApplySettings). Checked: menu, level, pause, HUD,
   identical framing to the stretched path, sharper.
+- Shader disk cache: D3D12Backend::Compile keeps every compiled shader as shadercache\<hash>.cso beside the exe
+  (hash of source, entry and profile; written as .part then renamed). To the menu: 20 compiled on the first run,
+  0 on the second (XBE_PERF counts).
