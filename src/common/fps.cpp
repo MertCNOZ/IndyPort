@@ -2,7 +2,7 @@
 // function (0x9A4C0) spins on the time stamp counter until 1000 / fpsLimit ms have passed since the last frame, and 0
 // turns that wait off. The simulation steps at a fixed 1/60 s (0x17D50), so drawing faster does not speed it up.
 // vars.cfg is signed, an edited file is replaced with the defaults; so the variable is set in memory instead, from
-// the settings' fps_cap: 30, 60, 120, 144 as they are, unlimited and the monitor's rate as 0 (the runtime's own
+// the settings' fps_cap: 30, 60, 120, 144, 165, 240 as they are, unlimited and the monitor's rate as 0 (the runtime's own
 // limiter, app::Pace, then holds the cap). The game writes the value back when it reads vars.cfg, so it is kept set.
 //
 // INDY_FPS=1 also logs every 2 seconds how many frames the game presented a second and how many vertical blanks

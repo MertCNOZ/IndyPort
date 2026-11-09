@@ -688,10 +688,10 @@ void ResolutionControl(Ui& ui, float w = 0) {
 }
 
 void FpsControl(Ui& ui, float w = 0) {
-    const int caps[] = {30, 60, 1, 120, 144, 0};
-    std::vector<std::string> names = {"30", "60", "Monitor refresh rate", "120", "144", "Unlimited"};
+    const int caps[] = {30, 60, 1, 120, 144, 165, 240, 0};
+    std::vector<std::string> names = {"30", "60", "Monitor refresh rate", "120", "144", "165", "240", "Unlimited"};
     int cur = 1;
-    for (int i = 0; i < 6; i++)
+    for (int i = 0; i < 8; i++)
         if (caps[i] == ui.s.fps_cap) cur = i;
     if (Combo("##fps", &cur, names, w)) ui.s.fps_cap = caps[cur];
 }

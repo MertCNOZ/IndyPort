@@ -967,6 +967,36 @@ index 0000000..fd6c418
 +bool Make(const texturedumper::Image& in, texturedumper::Image& out);
 +
 +}  // namespace gpu::ui_upscale
+diff --git a/runtime/kernel/files.cpp b/runtime/kernel/files.cpp
+index f44b26d..173f41b 100644
+--- a/runtime/kernel/files.cpp
++++ b/runtime/kernel/files.cpp
+@@ -577,10 +577,23 @@ KERNEL_EXPORT(226, NtSetInformationFile, 5) {
+             std::string target = ReadAnsiString(in + 8);
+             std::string host = ResolvePath(target, root);
+             if (host.empty()) return kObjectPathNotFound;
+-            if (f->fp) std::fflush(f->fp);
++            // Windows does not rename a file the CRT holds open (no FILE_SHARE_DELETE): closed around the rename and
++            // opened again at the new name. The game copies music into the Z: cache as name.wma_ and renames it
++            // through the handle; without this every copy stayed .wma_ and the track never played.
++            std::lock_guard<std::mutex> lock(f->io);
++            bool was_open = f->fp != nullptr;
++            if (was_open) {
++                std::fclose(f->fp);
++                f->fp = nullptr;
++            }
+             fs::rename(f->host, host, ec);
++            if (ec) LOGW("NtSetInformationFile: rename %s -> %s: %s", f->host.string().c_str(), host.c_str(), ec.message().c_str());
++            else f->host = host;
++            if (was_open) {
++                f->fp = std::fopen(f->host.string().c_str(), "r+b");
++                if (!f->fp) f->fp = std::fopen(f->host.string().c_str(), "rb");
++            }
+             if (ec) return kAccessDenied;
+-            f->host = host;
+             break;
+         }
+         case 4:  // basic, times and attributes are not kept
 diff --git a/runtime/kernel/kernel.h b/runtime/kernel/kernel.h
 index 163ea09..95751a7 100644
 --- a/runtime/kernel/kernel.h
