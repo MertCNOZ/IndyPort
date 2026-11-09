@@ -335,3 +335,7 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
 - Shader disk cache: D3D12Backend::Compile keeps every compiled shader as shadercache\<hash>.cso beside the exe
   (hash of source, entry and profile; written as .part then renamed). To the menu: 20 compiled on the first run,
   0 on the second (XBE_PERF counts).
+- Release: release.bat finds 7-Zip in Program Files when it is not on PATH and writes IndyPort.zip (59 MB: both
+  exes, compiler without work, textures\packs, empty assets, VC runtime, README). Clean install test (unzipped
+  outside the repo, game_path to the xiso): the game code built on first start in ~35 s, the game ran from the ISO
+  with the modern_buttons pack.
