@@ -19,7 +19,6 @@ void StartFps();                              // fps.cpp
 void FpsOverlay(double fps);                  // fps.cpp
 extern bool g_show_fps;                       // fps.cpp
 uint32_t g_draw_distance = 100;               // percent of each level's far clip (src/game/hooks.cpp)
-uint32_t g_fov = 100;                         // percent of the game's field of view (src/game/hooks.cpp)
 uint32_t g_rumble = 100;                      // percent of the game's rumble
 
 // the controller's rumble scaled by the rumble setting
@@ -86,7 +85,7 @@ const app::GameInfo app::kGame = {
                L"extracted game (with default.xbe), or put either in the assets folder beside the game.",
     .images = {{"default.xbe", "IndyET"}},  // each recompiled xbe and its exe, for title launches
     .options = {{"show_fps", &game::g_show_fps, nullptr}, {"draw_distance", nullptr, &game::g_draw_distance},
-                {"fov", nullptr, &game::g_fov}, {"rumble", nullptr, &game::g_rumble}},  // game settings kept in the settings file
+                {"rumble", nullptr, &game::g_rumble}},  // game settings kept in the settings file
     .load = game::Load,                   // reads more from the settings file's toml::table: pad_map
     .save = game::Save,                   // writes more into it: pad_map, keys, mouse
     .init = game::Init,                   // after the settings load, before the window and boot

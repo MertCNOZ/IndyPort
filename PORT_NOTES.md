@@ -356,8 +356,10 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
 
 ## Extras (2026-11-09)
 
-- fov (70-140%, a GameInfo option): the 0x323160 hook scales the tangents of both half angles (0x6D75F0 and
-  0x6D75F4) on top of the widescreen factor. 120% checked at the menu.
+- fov (70-120%, app::Settings): the 0x323160 hook scales the tangents of both half angles (0x6D75F0 and 0x6D75F4)
+  on top of the widescreen factor. The inventory wheel draws its items in 3D inside 2D rings, so the HUD pieces are
+  scaled by the same (hud.x = 1 / (wide * fov), hud.y = 1 / fov): checked at 120%, items inside their rings, the HUD
+  ~83% size. At 140% before this they sat off their rings.
 - rumble (0-100%): GameInfo rumble hook scales both motors.
 - fxaa (default off): classic PC FXAA in the final blit (kBlitHlsl, opts2.y), before the sharpening.
 - Skip intro: not done. The logo movies are not opened through NtCreateFile/NtOpenFile (no open in the log while

@@ -17,7 +17,6 @@
 
 namespace game {
 extern uint32_t g_draw_distance;  // game_info.cpp: draw_distance in the settings, percent
-extern uint32_t g_fov;            // game_info.cpp: fov in the settings, percent of the game's field of view
 }
 
 // The level's far clip: 0x323A10 takes the distance (5555 in Ceylon), keeps it under 65536 at 0x6D7614 with its
@@ -39,10 +38,11 @@ X86_FUNC(sub_00323A10) {
 // (tan scaled), so the view is wider and nothing at the new edges is culled; the rest of the game keeps seeing the
 // angle it set. The 4:3 frame is then shown at the screen's aspect, where the widened view has the right proportions.
 X86_EXTERN_FUNC(__imp__sub_00323160);
-// The fov setting widens or narrows both half angles alike (their tangents scaled), on top of the widescreen.
+// The fov setting widens or narrows both half angles alike (their tangents scaled), on top of the widescreen; the
+// renderer scales the HUD by the same (d3d12.cpp), so the inventory wheel's 3D items stay in their rings.
 X86_FUNC(sub_00323160) {
     float k = app::WideFactor();
-    float f = float(std::clamp(game::g_fov, 70u, 120u)) / 100.0f;
+    float f = float(std::clamp(app::Get().fov, 70u, 120u)) / 100.0f;
     float h = X86_MEMF32(0x6D75F0), v = X86_MEMF32(0x6D75F4);
     bool widen = (k > 1.01f || std::fabs(f - 1) > 0.001f) && h > 0.05f && h < 1.5f && v > 0.05f && v < 1.5f;
     static bool told = false;
