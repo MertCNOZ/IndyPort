@@ -272,6 +272,7 @@ struct Settings {
     int sharpen = 40;
     int draw_distance = 100;
     int aspect = 0;  // 0 widescreen (wider view), 1 4:3, 2 stretched
+    bool full_width = true;
     bool custom_textures = true;
     bool dump_textures = false;
     int dump_format = 0;
@@ -304,6 +305,7 @@ Settings LoadSettings() {
         s.sharpen = std::clamp(int(t["sharpen"].value_or(int64_t(40))), 0, 100);
         s.draw_distance = std::clamp(int(t["draw_distance"].value_or(int64_t(100))), 25, 1000);
         s.aspect = std::clamp(int(t["aspect"].value_or(int64_t(0))), 0, 2);
+        s.full_width = t["full_width"].value_or(true);
         s.custom_textures = t["custom_textures"].value_or(true);
         s.dump_textures = t["dump_textures"].value_or(false);
         s.dump_format = int(t["texture_dump_format"].value_or(int64_t(0)));
@@ -343,6 +345,7 @@ void SaveSettings(const Settings& s) {
     t.insert_or_assign("sharpen", int64_t(s.sharpen));
     t.insert_or_assign("draw_distance", int64_t(s.draw_distance));
     t.insert_or_assign("aspect", int64_t(s.aspect));
+    t.insert_or_assign("full_width", s.full_width);
     t.insert_or_assign("custom_textures", s.custom_textures);
     t.insert_or_assign("dump_textures", s.dump_textures);
     t.insert_or_assign("texture_dump_format", int64_t(s.dump_format));
@@ -720,6 +723,12 @@ void PageGraphics(Ui& ui) {
     AspectControl(ui);
     Desc("Widescreen shows a wider view of the game at your screen's shape (16:9, 21:9...) with the menus and HUD "
          "kept in proportion. 4:3 is the Xbox picture with bars at the sides; Stretched pulls the 4:3 picture wide.");
+    if (s.aspect == 0) {
+        Row("Full width detail");
+        Check("##fullw", &s.full_width);
+        Desc("Widescreen draws the game wider than the Xbox did, so the picture keeps full detail across the screen. "
+             "Off draws it 4:3 and widens it, a little softer and a little faster.");
+    }
     Row("VSync");
     Check("##vsync", &s.vsync);
     Desc("Waits for the monitor's refresh: no tearing. Off gives the lowest latency.");

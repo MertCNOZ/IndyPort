@@ -326,3 +326,9 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
 - Test hygiene: tools/ap_to_level.sh can miss the "down" on the main menu and walk into New Game, where its A presses
   type a name and can start a new game with a new save (it made "IndyY", 0064114C19B3, on 2026-11-09). Check the
   cursor with a screenshot before pressing A.
+- Full width (full_width, default on): in widescreen the screen's 4:3 targets (gw*3 == gh*4: 640x480 and its
+  fractions; square shadow targets stay) are created WideFactor times wider (CreateTargetResource), so no detail is
+  lost stretching. Uses of one scale were split into across/down: SetViewportScissor, ScaledRect (clears), CopyByDraw
+  and CopyByRegion rects; TargetScale (points, the half pixel shift), the wide-tap factor and the slope bias use the
+  vertical scale. Targets are remade when the factor changes (ApplySettings). Checked: menu, level, pause, HUD,
+  identical framing to the stretched path, sharper.
