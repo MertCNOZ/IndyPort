@@ -319,3 +319,10 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   movie filter (cubictap) now also sharpens at the movie's own scale: Catmull-Rom pushed away from the bilinear blend
   of the 4 nearest texels, clamped to their range (no halos). A final-pass CAS cannot do this for a 6x frame.
   Redrawing them (or shipping AI upscales) would copy the game's art, so it is not done.
+- Movies on a widened view (FitMovie in d3d12.cpp): the rows with picture are found by brightness (Y of the YUY2
+  frame), and the frame is zoomed until the picture fills the height but never past the screen's width: the map
+  transitions lose their letterbox bars and fill 16:9, the 4:3 logos keep bars at the sides. The zoom only eases out
+  within a movie (reset when another texture or a 30 frame gap). Passed to the XYZRHW shader as hud.xy.
+- Test hygiene: tools/ap_to_level.sh can miss the "down" on the main menu and walk into New Game, where its A presses
+  type a name and can start a new game with a new save (it made "IndyY", 0064114C19B3, on 2026-11-09). Check the
+  cursor with a screenshot before pressing A.

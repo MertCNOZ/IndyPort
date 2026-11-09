@@ -333,7 +333,7 @@ index 7e6507d..b72ef2d 100644
      va_list ap;
      va_start(ap, fmt);
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index 3f9d4e7..7eed9f7 100644
+index 3f9d4e7..d9c8815 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -13,6 +13,7 @@
@@ -389,15 +389,24 @@ index 3f9d4e7..7eed9f7 100644
      DXGI_FORMAT rtv = kBgra;  // the target's format
      bool over = false;        // premultiplied over the target, which keeps its alpha
  };
-@@ -736,6 +752,7 @@ private:
+@@ -736,6 +752,16 @@ private:
      uint32_t recent_used_next_ = 0;
      DrawBinds binds_;
      std::unordered_map<uint64_t, Tex> textures_;  // by data address, a P8 texture's with its palette's above
 +    bool screen_draw_ = false;  // the draw binding its textures is in screen space (ui_upscale)
++    // a movie frame drawn on a widened view: how it is fitted (FitMovie)
++    struct MovieFit {
++        uint32_t data = 0;
++        int top = -1, bottom = -1;  // the rows with picture seen so far in this movie
++        uint64_t frame = 0;
++    } movie_;
++    bool movie_draw_ = false;
++    float movie_sx_ = 1, movie_sy_ = 1;
++    void FitMovie(const TextureDesc& d);
      std::unordered_map<uint64_t, Tex> pack_textures_;  // texture pack images by key, kept for the run
      std::unordered_map<uint64_t, ComPtr<ID3D12PipelineState>> blit_psos_;
      Extension* ext_ = nullptr;
-@@ -1410,8 +1427,9 @@ void D3D12Backend::Blit(ID3D12Resource* src, DXGI_FORMAT fmt, const float uvrect
+@@ -1410,8 +1436,9 @@ void D3D12Backend::Blit(ID3D12Resource* src, DXGI_FORMAT fmt, const float uvrect
      dev_->CreateShaderResourceView(lut_.Get(), &sv, Cpu(srv_heap_.Get(), slot + 1, srv_inc_));
      uint32_t si = EnsureBlitSamplers();
      Alloc cb = Upload(256, 256);
@@ -409,7 +418,7 @@ index 3f9d4e7..7eed9f7 100644
      std::memcpy(cb.cpu, c, sizeof(c));
      DrawFullScreen(EnsureBlitPipeline(o.rtv, o.over), cb.gpu, slot, si);
  }
-@@ -1874,6 +1892,11 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
+@@ -1874,6 +1901,11 @@ ID3D12Resource* D3D12Backend::BindGuestTexture(const State& s, int stage, const
              tx.pack_gen = 0;
          }
      }
@@ -421,7 +430,7 @@ index 3f9d4e7..7eed9f7 100644
      if (tx.pack_gen != texturedumper::Generation()) LatchPackKey(tx, d, fi, colours);
      if (tx.pack_key) LatchPackImage(tx);
      const Tex& drawn = tx.swap ? *tx.swap : tx;
-@@ -1892,6 +1915,7 @@ void D3D12Backend::LatchPackKey(Tex& tx, const TextureDesc& d, const FormatInfo&
+@@ -1892,6 +1924,7 @@ void D3D12Backend::LatchPackKey(Tex& tx, const TextureDesc& d, const FormatInfo&
      texturedumper::Dump(key, d, p, colours);
      // dumping alone keys the bytes too: the pack image is not drawn then
      tx.pack_key = texturedumper::Replacing() ? key : 0;
@@ -429,17 +438,19 @@ index 3f9d4e7..7eed9f7 100644
  }
  
  // the pack image for tx's bytes once it has loaded; textures with the same bytes share its GPU copy
-@@ -1952,6 +1976,9 @@ ID3D12Resource* D3D12Backend::BindTexture(const State& s, int stage, DrawTexture
+@@ -1952,6 +1985,11 @@ ID3D12Resource* D3D12Backend::BindTexture(const State& s, int stage, DrawTexture
      const FormatInfo& fi = Format(d.format);
      info.kind = TextureKind(d);
      info.rect = d.linear;
 +    // a movie frame (a large linear texture in a screen space draw) is scaled up with a sharper filter
-+    if (d.linear && screen_draw_ && app::Get().video_filter && d.width >= 256 && d.height >= 192 && info.kind == kTex2D)
-+        info.flags |= kTexSmooth;
++    if (d.linear && screen_draw_ && d.width >= 256 && d.height >= 192 && info.kind == kTex2D) {
++        if (app::Get().video_filter) info.flags |= kTexSmooth;
++        FitMovie(d);
++    }
  
      // rendered by the GPU: sample the target itself; DXT data loaded over a target's memory is not it
      uint64_t alt = 0;
-@@ -2527,9 +2554,106 @@ void D3D12Backend::CaptureDraw(const State& s, uint32_t prim, uint32_t count, co
+@@ -2527,9 +2565,106 @@ void D3D12Backend::CaptureDraw(const State& s, uint32_t prim, uint32_t count, co
      CaptureTextures(s, stages);
  }
  
@@ -547,19 +558,21 @@ index 3f9d4e7..7eed9f7 100644
      fputc('\n', cap_);
  }
  
-@@ -2834,6 +2958,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2834,6 +2969,8 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // stage textures, then the pixel shader made for them
      DrawTextures stages;
 +    screen_draw_ = a.pretransformed;
++    movie_draw_ = false;
      if (!BindStageTexturesAndTargets(s, stages)) return;
      PixelKey pk = MakePixelKey(s, stages.info);
      pk.quad = sh.quad;
-@@ -2855,6 +2980,15 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2855,6 +2992,20 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      GuestExtent size;
      SurfaceSize(bound_rt_ ? s.rt : s.zs, size.w, size.h);
      DrawConstants c{};
 +    c.hud[0] = 1;
++    c.hud[1] = 1;
 +    // a widened view (app::WideFactor): HUD pieces, drawn in screen space on the main target at depth 0 (menus, text,
 +    // icons; this game leaves the depth test on for them), are drawn narrower about the centre so they keep their
 +    // shape. Full width draws (fades, loading pictures, movies) and anything placed at a depth stay as they are
@@ -568,12 +581,64 @@ index 3f9d4e7..7eed9f7 100644
 +        if (wide > 1.01f && ScreenSpanX(a, lo, hi, &zmax) && hi - lo < 0.9f * float(size.w) && zmax <= 1e-3f)
 +            c.hud[0] = 1.0f / wide;
 +    }
++    if (movie_draw_ && a.pretransformed) {
++        c.hud[0] = movie_sx_;
++        c.hud[1] = movie_sy_;
++    }
      UploadConstants(s, sh, k, stages, size, c);
      if (ext_) binds_ = {};
  
-@@ -3231,9 +3365,8 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3230,10 +3381,56 @@ void D3D12Backend::UploadGammaRamp() {
+     cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
++// A movie (the logos, the map transitions that are the loading screens) is a 4:3 frame. On a widened view it is
++// shown in proportion: zoomed until its picture fills the height, so letterbox bars are cut off, but never past the
++// screen's width (a 4:3 picture keeps bars at the sides). The rows with picture are found by their brightness, and
++// the zoom only eases out during a movie, so it does not jump around with dark frames.
++void D3D12Backend::FitMovie(const TextureDesc& d) {
++    movie_draw_ = true;
++    float k = app::WideFactor();
++    if (k <= 1.01f) {
++        movie_sx_ = movie_sy_ = 1;
++        return;
++    }
++    if (movie_.data != d.data || presents_ > movie_.frame + 30) movie_ = {};
++    movie_.data = d.data;
++    movie_.frame = presents_;
++    const uint8_t* p = static_cast<const uint8_t*>(kernel::HostPtr(d.data));
++    uint32_t pitch = d.pitch ? d.pitch : d.width * 4;
++    bool yuv = d.format == 0x24 || d.format == 0x25;
++    uint32_t bpp = yuv ? 2 : pitch >= d.width * 4 ? 4 : 2;
++    int top = -1, bottom = -1;
++    if (p && pitch >= d.width * bpp) {
++        for (uint32_t y = 0; y < d.height; y += 2) {
++            const uint8_t* row = p + size_t(y) * pitch;
++            bool lit = false;
++            for (uint32_t x = 8; x + 8 < d.width && !lit; x += 6) {
++                const uint8_t* px = row + size_t(x) * bpp;
++                uint32_t l = yuv ? px[d.format == 0x24 ? 0 : 1] : std::max({px[0], px[1], px[2]});
++                lit = l > 48;
++            }
++            if (lit) {
++                if (top < 0) top = int(y);
++                bottom = int(y);
++            }
++        }
++    }
++    if (top >= 0) {
++        movie_.top = movie_.top < 0 ? top : std::min(movie_.top, top);
++        movie_.bottom = std::max(movie_.bottom, bottom);
++    }
++    float h = float(d.height), content = h / k;  // before any picture: as a 16:9 letterbox
++    if (movie_.top >= 0) {
++        float centre = h * 0.5f;
++        content = 2.0f * std::max(centre - float(movie_.top), float(movie_.bottom + 2) - centre);
++    }
++    movie_sy_ = std::clamp(h / std::max(content, 1.0f), 1.0f, k);
++    movie_sx_ = movie_sy_ / k;
++}
++
  void D3D12Backend::BlitFrame(Target& t) {
 -    // 16:9 when the console reports a widescreen display, else 4:3
 -    bool wide = app::Widescreen();
@@ -583,7 +648,7 @@ index 3f9d4e7..7eed9f7 100644
      float w = float(bb_w_);
      float h = float(bb_h_);
      float vw = std::min(w, h * aspect);
-@@ -3245,7 +3378,8 @@ void D3D12Backend::BlitFrame(Target& t) {
+@@ -3245,7 +3442,8 @@ void D3D12Backend::BlitFrame(Target& t) {
      cl_->RSSetScissorRects(1, &scissor);
      binds_ = {};
      Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -593,7 +658,7 @@ index 3f9d4e7..7eed9f7 100644
  }
  
  void D3D12Backend::RenderUi() {
-@@ -3324,12 +3458,12 @@ void LogPerf() {
+@@ -3324,12 +3522,12 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -608,7 +673,7 @@ index 3f9d4e7..7eed9f7 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3338,7 +3472,7 @@ void LogPerf() {
+@@ -3338,7 +3536,7 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -618,7 +683,7 @@ index 3f9d4e7..7eed9f7 100644
               "%.1f read-backs %.1f late | %llu shaders %llu psos this second",
               p.draws / n, p.raw / n, p.verts / n / 1000.0, p.upload / n / 1048576.0, p.overflow / n, p.sigs / n,
 diff --git a/runtime/gpu/shaders.cpp b/runtime/gpu/shaders.cpp
-index 9ff7b67..b7cc2a6 100644
+index 9ff7b67..c293ac1 100644
 --- a/runtime/gpu/shaders.cpp
 +++ b/runtime/gpu/shaders.cpp
 @@ -55,6 +55,7 @@ const char* kCommonTail = R"(    float4 spread[4];
@@ -669,17 +734,18 @@ index 9ff7b67..b7cc2a6 100644
      float4 c = 0;
      int n = (int)w.z;
      for (int y = 0; y < n; y++)
-@@ -769,7 +794,8 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
+@@ -769,7 +794,9 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
      if (pretransformed) {
          s += "    float4 rhw = " + v(0, "float4(0,0,0,1)") + ";\n";
          s += "    float w = rhw.w == 0 ? 1 : 1 / rhw.w;\n";
 -        s += "    oPos = float4(rhw.xy, rhw.z / surf.z, w);\n";
-+        // the HUD drawn narrower about the centre on a widened view (hud.x, 1 otherwise)
-+        s += "    oPos = float4((rhw.x - surf.x * 0.5) * hud.x + surf.x * 0.5, rhw.y, rhw.z / surf.z, w);\n";
++        // on a widened view the HUD is drawn narrower about the centre and movies are fitted (hud.xy, 1 otherwise)
++        s += "    oPos = float4((rhw.x - surf.x * 0.5) * hud.x + surf.x * 0.5, (rhw.y - surf.y * 0.5) * hud.y + surf.y * 0.5,"
++             " rhw.z / surf.z, w);\n";
      } else {
          s += "    float4 ip = float4(" + v(0, "float4(0,0,0,1)") + ".xyz, 1);\n";
          s += "    float4 cp = mul(ip, wvp);\n";
-@@ -927,6 +953,8 @@ std::string PixelHlsl(const PixelKey& k) {
+@@ -927,6 +954,8 @@ std::string PixelHlsl(const PixelKey& k) {
              if (t.shadow)
                  body += F("float4 t%d = shadow(tex%d, smp%d, ", i, i, i) + TexUv(t, i, F("tc%d.xy / tc%d.w", i, i)) +
                          F(", tc%d.z / tc%d.w, %d, i.pos.xy, texsize[%d].xy);\n", i, i, t.shadow, i);
@@ -689,7 +755,7 @@ index 9ff7b67..b7cc2a6 100644
                  body += F("float4 t%d = spreadtap(tex%d, smp%d, %s, spread[%d], %s);\n", i, i, i, uv.c_str(), i, Hooks().ReadScale(t).c_str());
              else if (t.kind == kTex2D) body += F("float4 t%d = tex%d.Sample(smp%d, %s);\n", i, i, i, uv.c_str());
 diff --git a/runtime/gpu/shaders.h b/runtime/gpu/shaders.h
-index 08d9bff..cc8355c 100644
+index 08d9bff..d14ae3f 100644
 --- a/runtime/gpu/shaders.h
 +++ b/runtime/gpu/shaders.h
 @@ -19,6 +19,7 @@ struct TexInfo {
@@ -704,7 +770,7 @@ index 08d9bff..cc8355c 100644
      float lt[8][7][4];   // per light: diffuse, specular, ambient, position range, direction falloff, attenuation, cos theta/2 phi/2
      float rtshift[4];    // per kTexTarget stage: host pixels its reads move along x and y, negative up and left
      float zparams[4];    // ReversedDepthHlsl: a w buffer's scale (0 for a z buffer), its far w, the polygon offset
-+    float hud[4];        // screen space draws: x scale about the target's centre (1 / app::WideFactor for HUD pieces)
++    float hud[4];        // screen space draws: x and y scale about the target centre (HUD pieces, movies on a widened view)
  };
  
  }  // namespace gpu
