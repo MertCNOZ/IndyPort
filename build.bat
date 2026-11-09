@@ -17,6 +17,15 @@ set "OUT=%CD%\out\build\release"
 
 if not exist assets\%GAME_XBE% goto :nogame
 
+rem the SDK submodule with this port's changes (sdk-patches): fetched when missing, patched once
+if not exist sdk\runtime git submodule update --init sdk || goto :fail
+for %%p in (sdk-patches\*.patch) do (
+    git -C sdk apply --reverse --check "%CD%\%%p" >nul 2>nul || (
+        echo       Applying %%p to the SDK
+        git -C sdk apply "%CD%\%%p" || goto :fail
+    )
+)
+
 rem toolchain
 echo [1/3] Toolchain
 for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSDIR=%%i"

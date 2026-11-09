@@ -293,4 +293,7 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   the recompiled code for writes to 0x6D7614. src/game/hooks.cpp scales the argument. At 3% (167 units) the room's
   walls vanish entirely, so the engine culls against it too, not only the projection. 300% loads and plays; a
   longer view itself still needs an outdoor level to see (my test saves only reach Ceylon's first room).
-- The inventory wheel's "U" icon (d-pad up) is another original icon texture, not in modern_buttons yet.
+- The inventory wheel's "U" (d-pad up) is not an icon texture: neither dump (menus, level, wheel open) holds it,
+  and no new texture appears with the wheel; most likely a font letter over the dark 32x32 disc c3527d3af978232e
+  and a tinted ring. It already reads as a modern dark button, so it is left. Frame captures (ap.sh snap) do not
+  work after the relaunch ("no capture appeared"), which is why it was not pinned down by draw.
