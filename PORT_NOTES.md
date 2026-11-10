@@ -370,6 +370,36 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
 - Tested: slot 6, Backspace x5 and M E R T space 7 with real keys gave MERT7; Esc went back to the book; no save
   written. In Ceylon (Load Game, slot 1) W still walks.
 
+## Mouse camera, one to one (2026-11-10)
+
+- How it was found (new autopilot commands, src/common/autopilot.cpp): `scan start|same|changed|inc|dec|eq|mark|
+  back|list` narrows floats in guest memory by how they change; `watch <addr> [w|rw]` sets a hardware breakpoint
+  (DR0/DR7 on every thread) and `watch list` names the code that touched it by the nearest export of IndyET.dll
+  (every recompiled function is exported; the DLL has no PDB). The right stick X is -1 at three heap copies while
+  held (pad layer 0x28D20/0x28EF0); the action mapper 0x8A630 reads it; consumers ask 0x8A5B0(player, &record,
+  action, history, back) for an action record (player object + action*16 + 0x3F4; 0x3F8 is one history frame). A
+  temporary hook on 0x8A5B0 showed action 0x13 (camera x, scaled by 10 in the mapper) and 0x14 (camera y) read at
+  0x104128 in 0x1040B0, which gathers the player's input (deadzone 0.1, times 0.1) and returns the camera pair in
+  its second argument to 0x10B360 (return address 0x10B3F9).
+- 0x10B360 is the third person camera's update (this = the camera, 0x015260A0 in Ceylon). The stick is squared
+  (v*|v|) and adds to a yaw speed [+0x7C] (clamped and damped: inertia) and a pitch speed [+0x80]; [+0x84] is the
+  drift back behind Indy; [+0x4C] = the camera stick is non-zero this frame, which zeroes the drift and the idle
+  timer [+0x54] (that recentres the camera after ~3 s without input). There is no yaw angle: 0x10B1A0 returns the
+  flat vector from the camera [+0x130] to its target [+0x100], which is turned by the yaw speed (fsin/fcos). The
+  pitch is an angle, [+0x68] (0.2 at rest, [+0x6C] its default), less the pitch speed, kept within limits.
+- src/game/hooks.cpp: before 0x10B360 the mouse movement since the last frame is taken (keyboard.cpp
+  TakeMouseCamera: 0.0022 rad a count at sensitivity 50; the view turns the way the mouse goes; invert applies to
+  the pitch) and added to [+0x68]; the vector 0x10B1A0 returns to 0x10B513 is turned by the yaw; and while the mouse
+  rather than the stick moved the camera last, the camera x that 0x1040B0 returns to 0x10B3F9 is set to 1e-4 when
+  it is zero, so [+0x4C] is set: no drift back, no recentring. The stick (or IJKL) hands the camera back to the
+  game until the mouse moves again. While the hook runs (seen in the last 200 ms) the mouse feeds no stick;
+  elsewhere (menus, other cameras) the old mouse-as-stick path stays.
+- Tested in Ceylon with real mouse input (tools/sendinput.ps1): 60 counts right turned the view a little right;
+  400 right then 400 left came back to the same view; the view stayed put 5 s after the mouse stopped; mouse up
+  looked up; W walked the way the camera faced; first person (LT) turned with the mouse, and the third person
+  camera came out of it facing the same way.
+- tools/ap_load_slot1.sh: Load Game, slot 1, Ceylon, with pixel checks (tools/checkpx.ps1) before each A.
+
 ## Extras (2026-11-09)
 
 - fov (70-120%, app::Settings): the 0x323160 hook scales the tangents of both half angles (0x6D75F0 and 0x6D75F4)

@@ -90,3 +90,57 @@ X86_FUNC(sub_0022DCE0) {
         ctx = saved;
     }
 }
+
+namespace game {
+void TakeMouseCamera(float& yaw, float& pitch, bool& mouse_has_camera);  // keyboard.cpp: mouse movement, radians
+void NoteCameraStick();                                                // keyboard.cpp: the stick moved the camera
+}
+
+// Mouse look, one to one. The third person camera's update (0x10B360, this = the camera) has no yaw angle: each
+// frame it takes the flat vector from the camera to Indy (0x10B1A0: [this+0x100] target minus [this+0x130]
+// position), turns it by its yaw speed ([this+0x7C], from the right stick through 0x1040B0, squared, with inertia,
+// plus [this+0x84], the drift back behind Indy) and puts the camera there; the pitch is an angle at [this+0x68]
+// (less [this+0x80], its speed, kept within limits). The mouse turns that vector and that angle directly, by the
+// movement since the last frame, so the camera follows the mouse without the stick's speed curve and inertia.
+// While the mouse rather than the stick moved the camera last, the camera input it reads is made a hair above zero
+// (0x1040B0 out), which the camera takes as "the player is steering": it does not drift back behind Indy.
+namespace {
+float g_mouse_yaw = 0;
+bool g_mouse_steers = false;
+}
+
+X86_EXTERN_FUNC(__imp__sub_0010B360);
+X86_FUNC(sub_0010B360) {
+    uint32_t self = ctx.ecx;
+    float yaw = 0, pitch = 0;
+    bool steers = false;
+    game::TakeMouseCamera(yaw, pitch, steers);
+    g_mouse_yaw = yaw;
+    g_mouse_steers = steers;
+    if (pitch != 0) {
+        float p = X86_MEMF32(self + 0x68);
+        if (std::isfinite(p)) X86_MEMF32(self + 0x68) = p + pitch;
+    }
+    __imp__sub_0010B360(ctx, base);
+    g_mouse_yaw = 0;
+    g_mouse_steers = false;
+}
+
+X86_EXTERN_FUNC(__imp__sub_0010B1A0);
+X86_FUNC(sub_0010B1A0) {
+    uint32_t ret = X86_MEM32(ctx.esp), out = X86_MEM32(ctx.esp + 4);
+    __imp__sub_0010B1A0(ctx, base);
+    if (ret != 0x10B513u || g_mouse_yaw == 0) return;
+    float x = X86_MEMF32(out), z = X86_MEMF32(out + 8), c = std::cos(g_mouse_yaw), s = std::sin(g_mouse_yaw);
+    X86_MEMF32(out) = x * c - z * s;
+    X86_MEMF32(out + 8) = x * s + z * c;
+}
+
+X86_EXTERN_FUNC(__imp__sub_001040B0);
+X86_FUNC(sub_001040B0) {
+    uint32_t ret = X86_MEM32(ctx.esp), look = X86_MEM32(ctx.esp + 8);  // the camera's x and y
+    __imp__sub_001040B0(ctx, base);
+    if (ret != 0x10B3F9u) return;
+    if (X86_MEMF32(look) != 0 || X86_MEMF32(look + 4) != 0) game::NoteCameraStick();
+    else if (g_mouse_steers) X86_MEMF32(look) = 1e-4f;
+}

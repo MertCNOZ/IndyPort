@@ -1092,7 +1092,9 @@ void PageControls(Ui& ui) {
     Heading("KEYBOARD AND MOUSE");
     Row("Mouse look");
     Check("##mlook", &ui.s.mouse_look);
-    Desc("The mouse turns the camera. The cursor is hidden and kept inside the game window while it has focus.");
+    Desc("The mouse turns the camera one to one, as far as it moves, and the camera stays where you leave it; the "
+         "right stick or the camera keys bring back the game's own camera that swings behind Indy. The cursor is "
+         "hidden and kept inside the game window while it has focus.");
     if (ui.s.mouse_look) {
         Row("Mouse sensitivity");
         Slider("##msens", &ui.s.mouse_sensitivity, 1, 100, 1, "%d");

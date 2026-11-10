@@ -64,6 +64,7 @@ bool g_mouse_invert = false;
 
 HWND g_hwnd = nullptr;
 std::atomic<int> g_dx{0}, g_dy{0};          // raw mouse movement not read yet
+std::atomic<int> g_cam_dx{0}, g_cam_dy{0};  // the same for the camera hook (src/game/hooks.cpp)
 std::atomic<int> g_wheel_up{0}, g_wheel_down{0};  // wheel notches not played yet
 
 using Clock = std::chrono::steady_clock;
@@ -78,6 +79,12 @@ int64_t NowMs() {
 }
 
 bool Typing() { return NowMs() - g_textbox_seen.load() < 200; }
+
+// the third person camera ran in the last 200 ms (its hook turns it by the mouse itself); the time the mouse last
+// moved and the time the camera last had stick input (pad, or keys bound to the right stick)
+std::atomic<int64_t> g_camera_seen{0}, g_mouse_moved{0}, g_stick_moved{0};
+
+bool CameraHooked() { return NowMs() - g_camera_seen.load() < 200; }
 
 // the keys that type into a name box, and their DirectInput codes (scan codes, extended ones with 0x80)
 bool TextKey(uint32_t vk) {
@@ -162,6 +169,23 @@ void HoldCursor(bool hold) {
 
 void NoteTextBox() { g_textbox_seen = NowMs(); }
 
+void TakeMouseCamera(float& yaw, float& pitch, bool& mouse_has_camera) {
+    int64_t now = NowMs();
+    g_camera_seen = now;
+    int dx = g_cam_dx.exchange(0), dy = g_cam_dy.exchange(0);
+    yaw = pitch = 0;
+    mouse_has_camera = false;
+    if (!g_mouse_look || !OurWindowFocused()) return;
+    if (dx || dy) g_mouse_moved = now;
+    // radians a count: 0.0022 (about 0.13 degrees) at sensitivity 50
+    float k = float(g_mouse_sens) / 50.0f * 0.0022f;
+    yaw = -float(dx) * k;  // the camera's turn is the other way round: the view turns the way the mouse goes
+    pitch = float(dy) * k * (g_mouse_invert ? -1.0f : 1.0f);
+    mouse_has_camera = g_mouse_moved.load() > g_stick_moved.load();
+}
+
+void NoteCameraStick() { g_stick_moved = NowMs(); }
+
 bool TakeTextKey(uint8_t& dik) {
     std::lock_guard l(g_text_lock);
     if (g_text_keys.empty()) return false;
@@ -227,6 +251,8 @@ bool MouseMessage(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t*
                 ri.header.dwType == RIM_TYPEMOUSE && !(ri.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE)) {
                 g_dx += ri.data.mouse.lLastX;
                 g_dy += ri.data.mouse.lLastY;
+                g_cam_dx += ri.data.mouse.lLastX;
+                g_cam_dy += ri.data.mouse.lLastY;
             }
             return false;  // DefWindowProc still cleans the input up
         }
@@ -297,6 +323,13 @@ void KeyboardPad(int port, input::Pad& pad) {
     float dt = std::clamp(std::chrono::duration<float>(now - last).count(), 1e-4f, 0.1f);
     last = now;
     float mx = float(g_dx.exchange(0)) / dt, my = float(g_dy.exchange(0)) / dt;
+    if (CameraHooked()) {
+        // the third person camera turns by the mouse itself (TakeMouseCamera): no stick
+        vx = vy = 0;
+        return;
+    }
+    g_cam_dx = 0;
+    g_cam_dy = 0;
     float k = std::min(1.0f, dt / 0.008f);
     vx += (mx - vx) * k;
     vy += (my - vy) * k;
