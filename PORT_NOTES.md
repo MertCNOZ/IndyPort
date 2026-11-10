@@ -419,7 +419,9 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   screenshots); the third person hook leaves the mouse to it while it runs.
 - Menus: the player's input is gathered (0x1040B0, any caller) only in play; keyboard.cpp counts mouse buttons, the
   wheel and mouse movement only within 200 ms of that, so menus take keys only (a left click in the pause menu did
-  nothing).
+  nothing). The game stops gathering input that way in some moves (an attack's animation, the whip swing), which
+  looked like a menu and let go of a held left button mid-swing: a mouse button pressed while playing now stays held
+  until it is let go (logged: A stayed 255 across such a gap). Only new presses are ignored in menus.
 - Button icons "Keyboard and mouse" (texture_packs = keyboard_icons): launcher/key_icons.cpp draws the pack with
   GDI+ into textures/packs/keyboard_icons from the bindings whenever they or the choice change (and at launcher
   start): key caps with the key's label, a mouse with the bound button lit, W A S D and the arrow keys as small

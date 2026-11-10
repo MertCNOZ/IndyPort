@@ -143,7 +143,17 @@ WheelPress g_wheel[2];
 bool Held(uint32_t code, const bool wheel[2]) {
     if (!code) return false;
     if (code < 0x100 && (TextKey(code) || code == VK_ESCAPE) && Typing()) return false;  // typing a name
-    if (MouseCode(code) && !Gameplay()) return false;                                     // menus: keys only
+    if (MouseCode(code)) {
+        // menus take keys only: a mouse button pressed in a menu does nothing. One pressed while playing stays held
+        // until it is let go, whatever the game does meanwhile: in some moves (swinging on the whip) the game stops
+        // reading the player's input the usual way, which would look like a menu and drop the button mid-swing
+        if (code >= kWheelUp) return Gameplay() && (code == kWheelUp ? wheel[0] : wheel[1]);
+        static bool held[8];
+        bool down = Down(int(code));
+        if (!down) held[code] = false;
+        else if (Gameplay()) held[code] = true;
+        return held[code];
+    }
     if (code == kWheelUp) return wheel[0];
     if (code == kWheelDown) return wheel[1];
     return code < 0x100 && Down(int(code));
