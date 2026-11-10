@@ -428,6 +428,31 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   clusters for the sticks and the d-pad, the mouse for the right stick while mouse look is on. The menus' 32x32 A B
   X Y use a key bound to the button rather than a mouse button. Seen in Ceylon: "Move the [W A S D] thumbstick".
 
+## Launcher 0.5.0: languages, updates, Advanced page (2026-11-10)
+
+- Sidebar: "Indiana Jones and the Emperor's Tomb PC Port by MertCNOZ" under the logo; a GitHub button (top right of
+  the Home banner) opens github.com/MertCNOZ/IndyPort.
+- Languages (launcher/lang.cpp): English, Turkish, Russian; settings `language` = auto (Windows' UI language), en, tr,
+  ru. Texts stay English in the source and are looked up by that text (T()); Row, Desc, Heading, PageTitle, Button
+  and Combo translate on their own, "Text##id" labels keep their id. tools/lang_table.py holds the table and writes
+  launcher/lang_table.inc (UTF-8 as byte escapes). Fonts load Latin Extended-A, Cyrillic and arrows. Checked on
+  screenshots in Turkish and Russian (Home, Graphics, Controls, Advanced).
+- Advanced page: language; `close_on_play` (close rather than minimize; the game's job handle closing does not end
+  it); `update_check`, Check for updates, Releases page; Clear shader cache (shadercache beside the exe).
+- Updates (launcher/update.cpp): GET api.github.com/repos/MertCNOZ/IndyPort/releases/latest (WinHTTP, user agent
+  IndyPort-Launcher, nothing personal sent); tag_name, body, html_url and the IndyPort*.zip asset's
+  browser_download_url, read with a small JSON string scan. A newer tag shows "A new version is available" on Home
+  and Advanced; Update now downloads the zip to update\, unpacks it with Windows' tar.exe into update\new and copies
+  each file over the port's, renaming one in place (the running launcher) to .old first; the next start removes the
+  .old files. Paths that belong to the player are never written (assets, hdd, logs, save backups, shadercache,
+  settings.toml, textures\replacement, textures\dumps). Then the new launcher starts and the old one closes.
+  INDYPORT_UPDATE_URL replaces the API address for testing.
+- Tested with a local server (python http.server) and a fake v9.9.9 release in a separate folder: the notice
+  appeared at start, Update now replaced IndyPort.exe and added the release's file, did not apply the zip's own
+  settings.toml and hdd file, restarted into the new launcher and the .old file was gone.
+- Releases: build IndyPort.zip with release.bat and attach it to a GitHub release tagged vX.Y.Z (kVersion in
+  launcher/main.cpp must be bumped to match).
+
 ## Extras (2026-11-09)
 
 - fov (70-120%, app::Settings): the 0x323160 hook scales the tangents of both half angles (0x6D75F0 and 0x6D75F4)

@@ -1,7 +1,7 @@
 # Saves what the IndyET window shows as a PNG (PrintWindow with PW_RENDERFULLCONTENT, so it works while the
 # window is behind others). This is the image a player sees, which frame captures (final.bmp) can differ from.
 # Usage: powershell -ExecutionPolicy Bypass -File tools\winshot.ps1 <out.png>
-param([Parameter(Mandatory = $true)][string]$Out, [string]$Name = "IndyET")
+param([Parameter(Mandatory = $true)][string]$Out, [string]$Name = "IndyET", [int]$Id = 0)
 Add-Type -AssemblyName System.Drawing
 Add-Type -TypeDefinition @"
 using System;
@@ -15,7 +15,7 @@ public static class Shot {
 "@
 # real pixels, not the display scaling's logical ones
 [void][Shot]::SetProcessDPIAware()
-$p = Get-Process -Name $Name -ErrorAction Stop | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+$p = $(if ($Id) { Get-Process -Id $Id -ErrorAction Stop } else { Get-Process -Name $Name -ErrorAction Stop }) | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
 $r = New-Object Shot+RECT
 [void][Shot]::GetClientRect($p.MainWindowHandle, [ref]$r)
 $w = $r.R - $r.L; $h = $r.B - $r.T

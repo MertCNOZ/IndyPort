@@ -4,6 +4,8 @@ An unofficial native PC port of the original Xbox version of *Indiana Jones and 
 statically recompiling the game's code with [Xbox XBE Recomp](https://github.com/TGP482/XboxXBE-Recomp). It comes
 with **IndyPort**, a launcher for choosing your copy of the game and setting up graphics and controls.
 
+PC port by [MertCNOZ](https://github.com/MertCNOZ).
+
 > [!NOTE]
 > No game files are included. The port runs from your own legally acquired copy of the game: a disc image (`.iso`)
 > or the extracted files of the Xbox (USA) release.
@@ -33,7 +35,8 @@ Without a choice in IndyPort, the port also finds the game in an `assets` folder
 - **Sharp text and HUD**: the game's fonts, menus and HUD are upscaled on your PC with smooth outlines, so they stay
   crisp at 4K.
 - **Modern Xbox button icons** in the game's prompts and menus (LB/RB for White/Black, LT, RT, LS, RS), drawn for
-  high resolutions. The original icons are one click away.
+  high resolutions, or **keyboard and mouse icons** drawn from your own key bindings. The original icons are one
+  click away.
 - **Sharpening** (contrast adaptive) and up to 16x anisotropic filtering for the game's low resolution textures.
 - **Draw distance** up to 400% of each level's own.
 - **Sharper movies**: the game's 640 x 480 videos are scaled with a sharper filter.
@@ -43,11 +46,21 @@ Without a choice in IndyPort, the port also finds the game in an `assets` folder
 ### Controls
 - Xbox, PlayStation and Switch controllers, with hot plugging and rumble.
 - Remap every button of the game's controller in IndyPort, with a reset to defaults.
-- Keyboard: move W A S D, camera I J K L, d-pad arrow keys, A Space or Enter, B Q or Backspace, X E, Y R,
-  Start Enter, Back Tab, triggers Left Shift / Left Ctrl, Black / White C / Z, stick clicks V / B.
+- **Keyboard and mouse**: every button and stick direction can be bound to two keys or mouse buttons. Defaults:
+  move W A S D, action E, attack left mouse / F, jump Space, first person Left Alt, guard right mouse, draw / pack
+  Tab, reload R, items arrow keys, 1, 2 and the wheel, pause Esc, camera I J K L.
+- **Mouse look, one to one** in third and first person: the camera turns exactly as far as the mouse moves, with no
+  stick acceleration or smoothing, and stays where you leave it. Menus are played with the keyboard; there is no
+  cursor in the game.
+- Typing names for new saves with the keyboard.
 
 ### Saves
 - Saves live on the port's Xbox hard disk (`hdd\E\UDATA` beside the exe). IndyPort lists them and backs them up.
+
+### Launcher
+- English, Turkish and Russian (follows Windows, or chosen on the Advanced page).
+- **Updates**: IndyPort looks for a new release on GitHub when it starts (this can be turned off) and installs it
+  with one click. Only the port's own files are replaced: saves, settings, texture packs and your game files stay.
 
 ## System requirements
 - Windows 10 or 11, 64-bit

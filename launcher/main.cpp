@@ -27,6 +27,8 @@
 #include <toml++/toml.hpp>
 
 #include "key_icons.h"
+#include "lang.h"
+#include "update.h"
 
 #include <algorithm>
 #include <array>
@@ -37,6 +39,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <fstream>
 #include <mutex>
 #include <string>
@@ -47,7 +50,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr const char* kVersion = "0.4.0";
+constexpr const char* kVersion = "0.5.0";
 constexpr const wchar_t* kGameExe = L"IndyET.exe";
 constexpr const char* kTitleId = "4c410007";
 
@@ -168,7 +171,7 @@ GameFiles CheckFolder(const fs::path& dir) {
     g.where = Utf8(dir.wstring());
     if (fs::exists(dir / "default.xbe", ec)) {
         g.state = GameFiles::Ready;
-        g.what = "Extracted game files";
+        g.what = T("Extracted game files");
         return g;
     }
     std::vector<fs::path> isos;
@@ -178,12 +181,12 @@ GameFiles CheckFolder(const fs::path& dir) {
     for (auto& iso : isos)
         if (IsXboxImage(iso)) {
             g.state = GameFiles::Ready;
-            g.what = "Disc image: " + Utf8(iso.filename().wstring());
+            g.what = T("Disc image: ") + Utf8(iso.filename().wstring());
             return g;
         }
     g.state = GameFiles::Problem;
-    g.what = isos.empty() ? "This folder has no default.xbe and no disc image (.iso)."
-                          : "The disc images in this folder are not Xbox discs.";
+    g.what = isos.empty() ? T("This folder has no default.xbe and no disc image (.iso).")
+                          : T("The disc images in this folder are not Xbox discs.");
     return g;
 }
 
@@ -198,11 +201,11 @@ GameFiles CheckGame(const std::string& game_path) {
             g.where = game_path;
             bool ok = IsXboxImage(p);
             g.state = ok ? GameFiles::Ready : GameFiles::Problem;
-            g.what = ok ? "Disc image: " + Utf8(p.filename().wstring()) : "This file is not an Xbox disc image.";
+            g.what = ok ? T("Disc image: ") + Utf8(p.filename().wstring()) : std::string(T("This file is not an Xbox disc image."));
         } else {
             g.where = game_path;
             g.state = GameFiles::Problem;
-            g.what = "Not found. Was it moved, or is the drive unplugged?";
+            g.what = T("Not found. Was it moved, or is the drive unplugged?");
         }
         g.chosen = true;
         return g;
@@ -211,7 +214,7 @@ GameFiles CheckGame(const std::string& game_path) {
         GameFiles in = CheckFolder(a);
         if (in.state == GameFiles::Ready) return in;
     }
-    g.what = "No game chosen yet.";
+    g.what = T("No game chosen yet.");
     return g;
 }
 
@@ -308,6 +311,9 @@ struct Settings {
     bool mouse_look = true;
     int mouse_sensitivity = 50;
     bool mouse_invert_y = false;  // game button -> controller button, -1 none (pad_map.cpp)
+    std::string language = "auto";  // launcher language: auto (Windows), en, tr, ru
+    bool close_on_play = false;     // close the launcher once the game starts, rather than minimize it
+    bool update_check = true;       // look for a new release when the launcher starts
     bool operator==(const Settings&) const = default;
 };
 
@@ -343,6 +349,9 @@ Settings LoadSettings() {
         s.video_filter = t["video_filter"].value_or(true);
         s.game_path = t["game_path"].value_or(std::string());
         s.texture_packs = t["texture_packs"].value_or(s.texture_packs);
+        s.language = t["language"].value_or(s.language);
+        s.close_on_play = t["close_on_play"].value_or(s.close_on_play);
+        s.update_check = t["update_check"].value_or(s.update_check);
         if (const toml::array* a = t["keys"].as_array(); a && a->size() == kKeyActions) {
             KeyBindings k{};
             bool ok = true;
@@ -405,6 +414,9 @@ void SaveSettings(const Settings& s) {
     t.insert_or_assign("video_filter", s.video_filter);
     t.insert_or_assign("game_path", s.game_path);
     t.insert_or_assign("texture_packs", s.texture_packs);
+    t.insert_or_assign("language", s.language);
+    t.insert_or_assign("close_on_play", s.close_on_play);
+    t.insert_or_assign("update_check", s.update_check);
     toml::array map;
     for (int v : s.pad_map) map.push_back(int64_t(v));
     t.insert_or_assign("pad_map", std::move(map));
@@ -476,7 +488,7 @@ std::string BackUpSaves() {
     fs::path dst = ExeDir() / "save backups" / stamp;
     fs::create_directories(dst, ec);
     fs::copy(SavesDir(), dst, fs::copy_options::recursive, ec);
-    return ec ? "Backup failed: " + ec.message() : "Saved to save backups\\" + std::string(stamp);
+    return ec ? T("Backup failed: ") + ec.message() : T("Saved to save backups\\") + std::string(stamp);
 }
 
 // ---- running the game
@@ -498,7 +510,7 @@ bool GameAlreadyRunning() {
 // The game runs in a job: it restarts itself as a new process when it launches an Xbox image (the old one exits once
 // the new one shows its first frames), and the game code compiler runs as child processes. The game has ended only
 // when the job has no process left.
-void Play(HWND window) {
+void Play(HWND window, bool close_launcher) {
     if (g_game_running || GameAlreadyRunning()) {
         Log("play: the game is already running");
         return;
@@ -525,6 +537,13 @@ void Play(HWND window) {
     CloseHandle(pi.hProcess);
     Log("play: started the game, process %lu", pi.dwProcessId);
     g_game_running = true;
+    if (close_launcher) {
+        // the game does not need the launcher: closing the job's handle does not end its processes
+        CloseHandle(job);
+        CloseHandle(port);
+        PostMessageW(window, WM_CLOSE, 0, 0);
+        return;
+    }
     ShowWindow(window, SW_MINIMIZE);
     std::thread([job, port, window] {
         DWORD msg;
@@ -607,7 +626,7 @@ float g_col = 0;  // the controls' column, from the page's left
 
 void Row(const char* label) {
     ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(label);
+    ImGui::TextUnformatted(T(label));
     ImGui::SameLine(g_col);
 }
 
@@ -615,7 +634,7 @@ void Desc(const char* text) {
     if (!text) return;
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
     ImGui::PushTextWrapPos(ImGui::GetContentRegionMax().x - ImGui::GetFontSize());
-    ImGui::TextUnformatted(text);
+    ImGui::TextUnformatted(T(text));
     ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
     ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.35f));
@@ -644,11 +663,11 @@ float ControlWidth() { return ImGui::GetFontSize() * 14; }
 bool Combo(const char* id, int* current, const std::vector<std::string>& items, float width = 0) {
     ImGui::SetNextItemWidth(width > 0 ? width : ControlWidth());
     bool changed = false;
-    const char* preview = *current >= 0 && *current < int(items.size()) ? items[size_t(*current)].c_str() : "";
+    const char* preview = *current >= 0 && *current < int(items.size()) ? T(items[size_t(*current)].c_str()) : "";
     if (ImGui::BeginCombo(id, preview)) {
         for (int i = 0; i < int(items.size()); i++) {
             bool sel = i == *current;
-            if (ImGui::Selectable(items[size_t(i)].c_str(), sel)) {
+            if (ImGui::Selectable(T(items[size_t(i)].c_str()), sel)) {
                 *current = i;
                 changed = true;
             }
@@ -673,14 +692,14 @@ bool Slider(const char* id, int* v, int lo, int hi, int step, const char* fmt, f
 }
 
 bool Button(const char* label, float width = 0) {
-    return ImGui::Button(label, ImVec2(width, ImGui::GetFrameHeight()));
+    return ImGui::Button(T(label), ImVec2(width, ImGui::GetFrameHeight()));
 }
 
 void Heading(const char* text) {
     ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.5f));
     ImGui::PushFont(g_font_head);
     ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
-    ImGui::TextUnformatted(text);
+    ImGui::TextUnformatted(T(text));
     ImGui::PopStyleColor();
     ImGui::PopFont();
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -691,17 +710,17 @@ void Heading(const char* text) {
 
 void PageTitle(const char* title, const char* sub) {
     ImGui::PushFont(g_font_title);
-    ImGui::TextUnformatted(title);
+    ImGui::TextUnformatted(T(title));
     ImGui::PopFont();
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-    ImGui::TextUnformatted(sub);
+    ImGui::TextUnformatted(T(sub));
     ImGui::PopStyleColor();
 }
 
 // ---- pages
 
-enum class Page { Home, Graphics, Game, Controls, Saves, About, Count };
-const char* kPageNames[] = {"HOME", "GRAPHICS", "GAME", "CONTROLS", "SAVES", "ABOUT"};
+enum class Page { Home, Graphics, Game, Controls, Saves, Advanced, About, Count };
+const char* kPageNames[] = {"HOME", "GRAPHICS", "GAME", "CONTROLS", "SAVES", "ADVANCED", "ABOUT"};
 
 struct Ui {
     Page page = Page::Home;
@@ -877,7 +896,7 @@ void PageGame(Ui& ui) {
     Heading("GAME FILES");
     Row("Your game");
     {
-        std::string shown = ui.game.where.empty() ? std::string("Nothing chosen") : ui.game.where;
+        std::string shown = ui.game.where.empty() ? std::string(T("Nothing chosen")) : ui.game.where;
         float w = ImGui::GetContentRegionAvail().x - ImGui::GetFontSize();
         ImGui::SetNextItemWidth(w);
         ImGui::BeginDisabled();
@@ -991,13 +1010,13 @@ void KeyActionGlyph(int action) {
 std::string KeyName(int vk) {
     switch (vk) {
         case 0: return "-";
-        case VK_LBUTTON: return "Left mouse";
-        case VK_RBUTTON: return "Right mouse";
-        case VK_MBUTTON: return "Middle mouse";
-        case VK_XBUTTON1: return "Mouse 4";
-        case VK_XBUTTON2: return "Mouse 5";
-        case kWheelUp: return "Wheel up";
-        case kWheelDown: return "Wheel down";
+        case VK_LBUTTON: return T("Left mouse");
+        case VK_RBUTTON: return T("Right mouse");
+        case VK_MBUTTON: return T("Middle mouse");
+        case VK_XBUTTON1: return T("Mouse 4");
+        case VK_XBUTTON2: return T("Mouse 5");
+        case kWheelUp: return T("Wheel up");
+        case kWheelDown: return T("Wheel down");
         default: break;
     }
     UINT sc = MapVirtualKeyW(UINT(vk), MAPVK_VK_TO_VSC);
@@ -1080,7 +1099,7 @@ void PageControls(Ui& ui) {
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
             ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("changed");
+            ImGui::TextUnformatted(T("changed"));
             ImGui::PopStyleColor();
         }
     }
@@ -1096,9 +1115,9 @@ void PageControls(Ui& ui) {
     if (n == 0) Desc("No controller connected. Xbox, PlayStation and Switch controllers work.");
     for (int i = 0; i < n; i++) {
         const char* name = SDL_GetGamepadNameForID(pads[i]);
-        Row((std::string("Player ") + std::to_string(i + 1)).c_str());
+        Row((std::string(T("Player ")) + std::to_string(i + 1)).c_str());
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(name ? name : "Controller");
+        ImGui::TextUnformatted(name ? name : T("Controller"));
     }
     SDL_free(pads);
 
@@ -1171,15 +1190,15 @@ void PageAbout(Ui&) {
     PageTitle("ABOUT", "IndyPort");
     Heading("THE PORT");
     ImGui::PushTextWrapPos(ImGui::GetContentRegionMax().x - ImGui::GetFontSize());
-    ImGui::TextUnformatted("An unofficial native PC port of the original Xbox version of Indiana Jones and the "
-                           "Emperor's Tomb, made by statically recompiling the game's code.");
+    ImGui::TextUnformatted(T("An unofficial native PC port of the original Xbox version of Indiana Jones and the "
+                             "Emperor's Tomb, made by statically recompiling the game's code."));
     ImGui::Dummy(ImVec2(0, 4));
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-    ImGui::TextUnformatted("No game files are included. The port runs from your own legally acquired copy of the game.");
+    ImGui::TextUnformatted(T("No game files are included. The port runs from your own legally acquired copy of the game."));
     ImGui::Dummy(ImVec2(0, 4));
-    ImGui::TextUnformatted("Built with Xbox XBE Recomp by TGP482, Dear ImGui, SDL3 and toml++. Indiana Jones is a "
-                           "trademark of Lucasfilm Ltd. This project is not affiliated with or endorsed by Lucasfilm, "
-                           "LucasArts, Disney or Microsoft.");
+    ImGui::TextUnformatted(T("Built with Xbox XBE Recomp by TGP482, Dear ImGui, SDL3 and toml++. Indiana Jones is a "
+                             "trademark of Lucasfilm Ltd. This project is not affiliated with or endorsed by Lucasfilm, "
+                             "LucasArts, Disney or Microsoft."));
     ImGui::PopStyleColor();
     ImGui::PopTextWrapPos();
     Heading("VERSION");
@@ -1214,11 +1233,174 @@ void Banner(float w, float h) {
     ImGui::Dummy(ImVec2(w, h));
 }
 
+// ---- updates (update.cpp), the GitHub button, the Advanced page
+
+struct UpdateState {
+    std::mutex lock;
+    enum Phase { Idle, Checking, UpToDate, Available, CheckFailed, Installing, Failed, Done } phase = Idle;
+    bool quiet = false;  // the check at start: only a new version is shown
+    Release release;
+    std::string error;
+};
+UpdateState g_update;
+
+void OpenUrl(const char* url) { ShellExecuteW(nullptr, L"open", Wide(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL); }
+
+void StartUpdateCheck(bool quiet) {
+    {
+        std::lock_guard l(g_update.lock);
+        if (g_update.phase == UpdateState::Checking || g_update.phase == UpdateState::Installing) return;
+        g_update.phase = UpdateState::Checking;
+        g_update.quiet = quiet;
+    }
+    std::thread([] {
+        Release r = LatestRelease();
+        Log("update: latest %s%s", r.ok ? r.version.c_str() : "?", r.ok ? "" : (" (" + r.error + ")").c_str());
+        std::lock_guard l(g_update.lock);
+        g_update.release = r;
+        g_update.error = r.error;
+        g_update.phase = !r.ok                               ? UpdateState::CheckFailed
+                         : NewerVersion(r.version, kVersion) ? UpdateState::Available
+                                                             : UpdateState::UpToDate;
+    }).detach();
+}
+
+void StartUpdateInstall(Ui& ui) {
+    if (g_game_running || GameAlreadyRunning()) {
+        Note(ui, T("Close the game first."));
+        return;
+    }
+    Release r;
+    {
+        std::lock_guard l(g_update.lock);
+        if (g_update.phase != UpdateState::Available) return;
+        g_update.phase = UpdateState::Installing;
+        r = g_update.release;
+    }
+    std::thread([r] {
+        std::string error;
+        bool ok = InstallRelease(r, ExeDir(), error);
+        Log("update: install %s %s", r.version.c_str(), ok ? "done" : error.c_str());
+        std::lock_guard l(g_update.lock);
+        g_update.error = error;
+        g_update.phase = ok ? UpdateState::Done : UpdateState::Failed;
+    }).detach();
+}
+
+// the update's state as a line, and Update now while a new version waits; on Home only when there is news
+void UpdateNotice(Ui& ui, bool always = false) {
+    UpdateState::Phase phase;
+    std::string text, version, error;
+    bool quiet;
+    {
+        std::lock_guard l(g_update.lock);
+        phase = g_update.phase;
+        version = g_update.release.version;
+        error = g_update.error;
+        quiet = g_update.quiet;
+    }
+    switch (phase) {
+        case UpdateState::Checking: text = T("Checking for updates..."); break;
+        case UpdateState::UpToDate: text = T("IndyPort is up to date."); break;
+        case UpdateState::CheckFailed: text = T("Could not check for updates: ") + error; break;
+        case UpdateState::Available: text = T("A new version is available: ") + ("v" + version); break;
+        case UpdateState::Installing: text = T("Installing the update..."); break;
+        case UpdateState::Failed: text = T("The update failed: ") + error; break;
+        default: break;
+    }
+    bool news = phase == UpdateState::Available || phase == UpdateState::Installing || phase == UpdateState::Failed;
+    (void)quiet;
+    if (text.empty() || (!always && !news)) return;
+    ImGui::PushStyleColor(ImGuiCol_Text, phase == UpdateState::Failed || phase == UpdateState::CheckFailed ? kBad : kAccent);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(text.c_str());
+    ImGui::PopStyleColor();
+    if (phase == UpdateState::Available) {
+        ImGui::SameLine();
+        if (Button("Update now", ImGui::GetFontSize() * 9)) StartUpdateInstall(ui);
+    }
+}
+
+// the GitHub button in the banner's top right corner
+void GitHubButton(float pad) {
+    float bw = ImGui::GetFontSize() * 7;
+    ImVec2 keep = ImGui::GetCursorPos();
+    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - bw - pad, pad * 0.6f));
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(18, 15, 12, 200));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    if (Button("GitHub \xe2\x86\x97", bw)) OpenUrl(kRepoPage);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kRepoPage);
+    ImGui::SetCursorPos(keep);
+}
+
+// a check box with its text after it, for options whose text is too long for the label column
+void CheckLine(const char* id, bool* v, const char* text) {
+    Check(id, v);
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(T(text));
+}
+
+void PageAdvanced(Ui& ui) {
+    PageTitle("ADVANCED", "Language, updates and maintenance.");
+    Heading("LAUNCHER");
+    Row("Language");
+    {
+        const char* codes[] = {"auto", "en", "tr", "ru"};
+        int cur = 0;
+        for (int i = 0; i < 4; i++)
+            if (ui.s.language == codes[i]) cur = i;
+        if (Combo("##lang", &cur, {"Automatic (Windows)", "English", "T\xc3\xbcrk\xc3\xa7" "e",
+                                    "\xd0\xa0\xd1\x83\xd1\x81\xd1\x81\xd0\xba\xd0\xb8\xd0\xb9"})) {
+            ui.s.language = codes[cur];
+            SetLanguage(ui.s.language);
+            ui.game = CheckGame(ui.s.game_path);  // its messages in the new language
+        }
+    }
+    Desc("The language of this launcher. The game itself stays in English.");
+    CheckLine("##closeplay", &ui.s.close_on_play, "Close the launcher when the game starts");
+    Desc("Off keeps it minimized while you play and shows it again when the game ends.");
+
+    Heading("UPDATES");
+    CheckLine("##updcheck", &ui.s.update_check, "Look for a new version when the launcher starts");
+    ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.3f));
+    float bw = ImGui::GetFontSize() * 11;
+    if (Button("Check for updates", bw)) StartUpdateCheck(false);
+    ImGui::SameLine();
+    if (Button("Releases page", bw)) OpenUrl(kReleasesPage);
+    ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.2f));
+    UpdateNotice(ui, true);
+    {
+        std::lock_guard l(g_update.lock);
+        if (g_update.phase == UpdateState::Available && !g_update.release.notes.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+            ImGui::PushTextWrapPos(ImGui::GetContentRegionMax().x - ImGui::GetFontSize());
+            ImGui::TextUnformatted(g_update.release.notes.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::PopStyleColor();
+        }
+    }
+    Desc("Updates come from the project's GitHub releases. Updating replaces only the port's own files: your saves, "
+         "settings, texture packs and game files stay as they are.");
+
+    Heading("SHADER CACHE");
+    Desc("Compiled shaders are kept so the game does not stutter on them again. Clear the cache only if the picture "
+         "is broken after an update.");
+    if (Button("Clear shader cache", bw)) {
+        std::error_code ec;
+        fs::remove_all(ExeDir() / "shadercache", ec);
+        Note(ui, T("The shader cache is cleared."));
+    }
+}
+
 void PageHome(Ui& ui, float banner_h) {
     ImVec2 start = ImGui::GetCursorPos();
     float pad = ImGui::GetFontSize() * 2;
     ImGui::SetCursorPos(ImVec2(0, 0));
     Banner(ImGui::GetWindowWidth(), banner_h);
+    GitHubButton(pad);
     ImGui::SetCursorPos(ImVec2(start.x, banner_h - pad * 0.5f));
 
     ImGui::PushFont(g_font_head);
@@ -1229,7 +1411,8 @@ void PageHome(Ui& ui, float banner_h) {
     ImU32 colour = ui.game.state == GameFiles::Ready ? kDim : kBad;
     ImGui::PushStyleColor(ImGuiCol_Text, colour);
     if (ui.game.state == GameFiles::Ready) ImGui::Text("%s", ui.game.what.c_str());
-    else ImGui::Text("%s Choose your copy of the game on the Game page.", ui.game.what.c_str());
+    else ImGui::Text(T("%s Choose your copy of the game on the Game page."), ui.game.what.c_str());
+    UpdateNotice(ui);
     ImGui::PopStyleColor();
 
     Heading("QUICK SETTINGS");
@@ -1240,7 +1423,7 @@ void PageHome(Ui& ui, float banner_h) {
     auto cell = [&](float x, const char* name) {
         ImGui::SetCursorPosX(x);
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(name);
+        ImGui::TextUnformatted(T(name));
         ImGui::SameLine(x + label);
     };
     cell(x0, "Display mode");
@@ -1316,7 +1499,7 @@ void ApplyTheme(float scale) {
 void LoadFonts(float scale) {
     ImGuiIO& io = ImGui::GetIO();
     io.Fonts->Clear();
-    static const ImWchar ranges[] = {0x0020, 0x00FF, 0x0100, 0x017F, 0x2010, 0x2027, 0};
+    static const ImWchar ranges[] = {0x0020, 0x00FF, 0x0100, 0x017F, 0x0400, 0x04FF, 0x2010, 0x2027, 0x2190, 0x21FF, 0};
     auto add = [&](const char* file, float size) -> ImFont* {
         std::string path = std::string("C:\\Windows\\Fonts\\") + file;
         if (fs::exists(path)) return io.Fonts->AddFontFromFileTTF(path.c_str(), size * scale, nullptr, ranges);
@@ -1350,10 +1533,12 @@ void Sidebar(Ui& ui, float width, float height) {
     ImGui::PopFont();
     ImGui::SetCursorPosX(pad);
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-    ImGui::TextUnformatted("The Emperor's Tomb on PC");
+    ImGui::PushTextWrapPos(width - pad * 0.6f);
+    ImGui::TextUnformatted("Indiana Jones and the Emperor's Tomb PC Port by MertCNOZ");
+    ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
 
-    ImGui::SetCursorPosY(pad * 4.6f);
+    ImGui::SetCursorPosY(std::max(pad * 4.6f, ImGui::GetCursorPosY() + pad * 0.9f));
     float row_h = ImGui::GetFontSize() * 3.2f;
     for (int i = 0; i < int(Page::Count); i++) {
         Page p = Page(i);
@@ -1368,7 +1553,7 @@ void Sidebar(Ui& ui, float width, float height) {
         ImGui::PushFont(g_font_nav);
         float th = ImGui::GetFontSize();
         d->AddText(ImVec2(at.x + pad, at.y + (row_h - th) * 0.5f), sel ? kAccent : hot ? kText : IM_COL32(205, 196, 184, 255),
-                   kPageNames[i]);
+                   T(kPageNames[i]));
         ImGui::PopFont();
     }
 
@@ -1376,7 +1561,7 @@ void Sidebar(Ui& ui, float width, float height) {
     ImGui::SetCursorPos(ImVec2(pad, height - fs * 5.4f));
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
     ImGui::PushTextWrapPos(width - pad);
-    ImGui::TextUnformatted("In the game: F9 shows the frame counter.");
+    ImGui::TextUnformatted(T("In the game: F9 shows the frame counter."));
     ImGui::PopTextWrapPos();
     ImGui::SetCursorPosX(pad);
     ImGui::Text("v%s", kVersion);
@@ -1393,11 +1578,13 @@ void BottomBar(Ui& ui, float x, float y, float w, float h, bool focus_play) {
 
     // the summary: resolution, scale, frame rate
     const Settings& s = ui.s;
-    std::string res = s.width ? std::to_string(s.width) + " x " + std::to_string(s.height) : "Desktop resolution";
-    std::string fps = s.fps_cap == 0 ? "unlimited FPS" : s.fps_cap == 1 ? "monitor refresh rate" : std::to_string(s.fps_cap) + " FPS";
+    std::string res = s.width ? std::to_string(s.width) + " x " + std::to_string(s.height) : std::string(T("Desktop resolution"));
+    std::string fps = s.fps_cap == 0   ? std::string(T("unlimited FPS"))
+                      : s.fps_cap == 1 ? std::string(T("monitor refresh rate"))
+                                       : std::to_string(s.fps_cap) + " FPS";
     const char* modes[] = {"Fullscreen", "Borderless", "Windowed"};
-    std::string summary = std::string(modes[s.display_mode]) + "  \xc2\xb7  " + res + "  \xc2\xb7  " +
-                          std::to_string(s.render_percent) + "% scale  \xc2\xb7  " + fps;
+    std::string summary = std::string(T(modes[s.display_mode])) + "  \xc2\xb7  " + res + "  \xc2\xb7  " +
+                          std::to_string(s.render_percent) + T("% scale") + "  \xc2\xb7  " + fps;
     if (!ui.message.empty() && ImGui::GetTime() < ui.message_until) summary = ui.message;
     ImVec2 ts = ImGui::CalcTextSize(summary.c_str());
     d->AddText(ImVec2(o.x + x + pad, o.y + y + (h - ts.y) * 0.5f),
@@ -1407,7 +1594,7 @@ void BottomBar(Ui& ui, float x, float y, float w, float h, bool focus_play) {
     float bw = ImGui::GetFontSize() * 13, bh = h - ImGui::GetFontSize() * 1.2f;
     ImGui::SetCursorPos(ImVec2(x + w - bw - pad, y + (h - bh) * 0.5f));
     bool ready = ui.game.state == GameFiles::Ready;
-    const char* label = g_game_running ? "RUNNING" : ready ? "PLAY" : "CHOOSE GAME";
+    const char* label = T(g_game_running ? "RUNNING" : ready ? "PLAY" : "CHOOSE GAME");
     ImGui::PushStyleColor(ImGuiCol_Button, g_game_running ? IM_COL32(60, 52, 45, 255) : kPlay);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(206, 108, 28, 255));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(150, 72, 16, 255));
@@ -1415,7 +1602,7 @@ void BottomBar(Ui& ui, float x, float y, float w, float h, bool focus_play) {
     ImGui::PushFont(ready ? g_font_play : g_font_nav);
     if (focus_play) ImGui::SetKeyboardFocusHere();
     if (ImGui::Button(label, ImVec2(bw, bh)) && !g_game_running) {
-        if (ready) Play(ui.window);
+        if (ready) Play(ui.window, ui.s.close_on_play);
         else ui.page = Page::Game;
     }
     ImGui::PopFont();
@@ -1527,11 +1714,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     ImGui_ImplDX11_Init(g_dev, g_ctx);
 
     Ui ui;
+    SetLanguage(ui.s.language);
+    ui.game = CheckGame(ui.s.game_path);  // its messages in the chosen language
+    RemoveOldFiles(ExeDir());             // left by an update
+    if (ui.s.update_check) StartUpdateCheck(true);
     UpdateKeyIcons(ui.s);  // a pack missing or from another build
     ui.window = hwnd;
     Log("IndyPort %s, game: %s (%s)", kVersion, ui.game.what.c_str(), ui.game.where.c_str());
-    // INDY_LAUNCHER_PAGE=0..5 opens a page at once (screenshots)
-    if (const char* pg = std::getenv("INDY_LAUNCHER_PAGE"); pg && *pg >= '0' && *pg <= '5') ui.page = Page(*pg - '0');
+    // INDY_LAUNCHER_PAGE=0..6 opens a page at once (screenshots)
+    if (const char* pg = std::getenv("INDY_LAUNCHER_PAGE"); pg && *pg >= '0' && *pg <= '6') ui.page = Page(*pg - '0');
     LoadModes(ui);
     bool quit = false;
     double checked = 0;
@@ -1577,7 +1768,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             ui.page = Page::Home;
         if (front && !popup && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) &&
             ui.game.state == GameFiles::Ready)
-            Play(hwnd);
+            Play(ui.window, ui.s.close_on_play);
         if (ImGui::GetTime() > checked + 2) {
             ui.saves = ListSaves();
             ui.game = CheckGame(ui.s.game_path);
@@ -1623,6 +1814,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             case Page::Game: PageGame(ui); break;
             case Page::Controls: PageControls(ui); break;
             case Page::Saves: PageSaves(ui); break;
+            case Page::Advanced: PageAdvanced(ui); break;
             case Page::About: PageAbout(ui); break;
             default: break;
         }
@@ -1641,6 +1833,19 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             SaveSettings(ui.s);
             ui.saved = ui.s;
             UpdateKeyIcons(ui.s);
+        }
+        // an update is in place: the new launcher takes over
+        if (std::lock_guard l(g_update.lock); g_update.phase == UpdateState::Done) {
+            g_update.phase = UpdateState::Idle;
+            fs::path exe = ExeDir() / "IndyPort.exe";
+            std::wstring cmd = L"\"" + exe.wstring() + L"\"";
+            STARTUPINFOW si{sizeof(si)};
+            PROCESS_INFORMATION pi{};
+            if (CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, ExeDir().c_str(), &si, &pi)) {
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+                PostMessageW(hwnd, WM_CLOSE, 0, 0);
+            }
         }
 
         ImGui::Render();

@@ -1,7 +1,7 @@
 # Clicks a point of a process's window, in the pixels of tools\winshot.ps1's image of it (the whole window), with
 # real input (SendInput), then optionally taps a key. The window is brought to the front first.
 # Usage: powershell -ExecutionPolicy Bypass -File tools\clickat.ps1 -Name IndyPort -X 1370 -Y 792 [-Key 0x48] [-Right]
-param([string]$Name = "IndyPort", [int]$X, [int]$Y, [string]$Key = "", [switch]$Right)
+param([string]$Name = "IndyPort", [int]$X, [int]$Y, [string]$Key = "", [switch]$Right, [int]$Id = 0)
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -16,7 +16,7 @@ public static class Clk {
 }
 "@
 [void][Clk]::SetProcessDPIAware()
-$h = (Get-Process -Name $Name -ErrorAction Stop | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).MainWindowHandle
+$h = ($(if ($Id) { Get-Process -Id $Id -ErrorAction Stop } else { Get-Process -Name $Name -ErrorAction Stop }) | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).MainWindowHandle
 [void][Clk]::SetForegroundWindow($h)
 Start-Sleep -Milliseconds 300
 $r = New-Object Clk+RECT
