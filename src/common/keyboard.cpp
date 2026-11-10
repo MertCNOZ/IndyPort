@@ -9,6 +9,10 @@
 // person, the wheel scrolls the items, Esc pauses; Enter is A and Start (the title screen wants Start), Backspace
 // is B in the menus.
 //
+// Names: while a name box is up (New Game's "Enter a name", src/game/hooks.cpp) letters, digits, space, Backspace,
+// Delete, Home, End and the left and right arrows type into it instead of pressing their bound buttons; up, down
+// and Enter still move to OK and choose it, and Esc leaves the box (B).
+//
 // Mouse look: raw mouse movement turned into the right stick. The movement's speed (smoothed over only 8 ms, about
 // a frame, so polls close together share it without lag) sets how far the stick is pushed, past the game's dead
 // zone, so the camera turns as fast as the mouse moves. While the game has focus the cursor is hidden and kept inside the window.
@@ -21,6 +25,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <deque>
+#include <mutex>
 
 #include <toml++/toml.hpp>
 
@@ -62,6 +68,30 @@ std::atomic<int> g_wheel_up{0}, g_wheel_down{0};  // wheel notches not played ye
 
 using Clock = std::chrono::steady_clock;
 
+// a name box is up: the hook saw it in the last 200 ms
+std::atomic<int64_t> g_textbox_seen{0};
+std::mutex g_text_lock;
+std::deque<uint8_t> g_text_keys;
+
+int64_t NowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+}
+
+bool Typing() { return NowMs() - g_textbox_seen.load() < 200; }
+
+// the keys that type into a name box, and their DirectInput codes (scan codes, extended ones with 0x80)
+bool TextKey(uint32_t vk) {
+    return (vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9') || (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9) ||
+           vk == VK_SPACE || vk == VK_BACK || vk == VK_DELETE || vk == VK_LEFT || vk == VK_RIGHT || vk == VK_HOME ||
+           vk == VK_END;
+}
+
+uint8_t DirectInputCode(uint32_t vk) {
+    bool extended = vk == VK_DELETE || vk == VK_LEFT || vk == VK_RIGHT || vk == VK_HOME || vk == VK_END;
+    uint32_t sc = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+    return uint8_t((sc & 0x7F) | (extended ? 0x80 : 0));
+}
+
 bool Down(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
 
 bool OurWindowFocused() {
@@ -94,6 +124,7 @@ WheelPress g_wheel[2];
 
 bool Held(uint32_t code, const bool wheel[2]) {
     if (!code) return false;
+    if (code < 0x100 && (TextKey(code) || code == VK_ESCAPE) && Typing()) return false;  // typing a name
     if (code == kWheelUp) return wheel[0];
     if (code == kWheelDown) return wheel[1];
     return code < 0x100 && Down(int(code));
@@ -128,6 +159,16 @@ void HoldCursor(bool hold) {
 }
 
 }  // namespace
+
+void NoteTextBox() { g_textbox_seen = NowMs(); }
+
+bool TakeTextKey(uint8_t& dik) {
+    std::lock_guard l(g_text_lock);
+    if (g_text_keys.empty()) return false;
+    dik = g_text_keys.front();
+    g_text_keys.pop_front();
+    return true;
+}
 
 void LoadKeys(const void* table) {
     const auto& t = *static_cast<const toml::table*>(table);
@@ -173,6 +214,12 @@ void MouseWindow(void* hwnd) {
 // the game window's messages: raw mouse movement, the wheel, no cursor over the window while mouse look holds it
 bool MouseMessage(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result) {
     switch (msg) {
+        case WM_KEYDOWN:
+            if (Typing() && TextKey(uint32_t(wp))) {
+                std::lock_guard l(g_text_lock);
+                if (g_text_keys.size() < 64) g_text_keys.push_back(DirectInputCode(uint32_t(wp)));
+            }
+            return false;
         case WM_INPUT: {
             RAWINPUT ri;
             UINT size = sizeof(ri);
@@ -229,6 +276,9 @@ void KeyboardPad(int port, input::Pad& pad) {
         if (p.analog >= 0) pad.analog[p.analog] = 0xFF;
         else pad.buttons |= p.mask;
     }
+
+    // Esc leaves a name box, as B does (Space and Backspace, B's keys, are typing there)
+    if (Typing() && (GetAsyncKeyState(VK_ESCAPE) & 0x8000)) pad.analog[1] = 0xFF;
 
     // sticks have y up; keys add to a real stick and clamp
     auto keys_axis = [&](int negative, int positive) { return (held(positive) ? 1 : 0) - (held(negative) ? 1 : 0); };

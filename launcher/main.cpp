@@ -915,6 +915,17 @@ void PageGame(Ui& ui) {
     Desc("The Xbox hard disk of the port: hdd\\E\\UDATA holds the saved games.");
 }
 
+// text in a small dark rounded box centred at c
+void Badge(ImDrawList* d, ImVec2 c, float s, const char* t) {
+    ImVec2 ts = ImGui::CalcTextSize(t);
+    float w = std::max(ts.x + s * 0.4f, s * 0.84f), h = s * 0.74f;
+    d->AddRectFilled(ImVec2(c.x - w * 0.5f, c.y - h * 0.5f), ImVec2(c.x + w * 0.5f, c.y + h * 0.5f),
+                     IM_COL32(36, 36, 38, 255), h * 0.3f);
+    d->AddRect(ImVec2(c.x - w * 0.5f, c.y - h * 0.5f), ImVec2(c.x + w * 0.5f, c.y + h * 0.5f), IM_COL32(80, 80, 84, 255),
+               h * 0.3f, 0, 1.2f);
+    d->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32(230, 230, 232, 255), t);
+}
+
 // a modern controller's button as a small badge: A B X Y as coloured letters in a dark circle, the others as text in
 // a rounded box
 void ButtonGlyph(int button) {
@@ -936,14 +947,35 @@ void ButtonGlyph(int button) {
         d->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), colours[button], text);
         return;
     }
-    const char* t = shortname[button];
+    Badge(d, c, s, shortname[button]);
+}
+
+// the controller part a keyboard binding presses: keys press the game's own Xbox buttons (the gamepad mapping above
+// does not apply to them), shown as today's controller labels them, as the Modern Xbox icons do in the game (Black
+// RB, White LB, Start Menu, Back View); the stick directions as the stick with an arrow
+void KeyActionGlyph(int action) {
+    if (action < 16) {
+        ButtonGlyph(kDefaultPadMap[size_t(action)]);
+        return;
+    }
+    float s = ImGui::GetFrameHeight();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(s * 1.6f, s));
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    ImVec2 c(p.x + s * 0.55f, p.y + s * 0.5f);
+    int dir = (action - 16) % 4;  // up, down, left, right
+    d->AddCircleFilled(c, s * 0.42f, IM_COL32(36, 36, 38, 255), 24);
+    d->AddCircle(c, s * 0.42f, IM_COL32(80, 80, 84, 255), 24, 1.2f);
+    const char* t = action < 20 ? "LS" : "RS";
     ImVec2 ts = ImGui::CalcTextSize(t);
-    float w = std::max(ts.x + s * 0.4f, s * 0.84f), h = s * 0.74f;
-    d->AddRectFilled(ImVec2(c.x - w * 0.5f, c.y - h * 0.5f), ImVec2(c.x + w * 0.5f, c.y + h * 0.5f),
-                     IM_COL32(36, 36, 38, 255), h * 0.3f);
-    d->AddRect(ImVec2(c.x - w * 0.5f, c.y - h * 0.5f), ImVec2(c.x + w * 0.5f, c.y + h * 0.5f), IM_COL32(80, 80, 84, 255),
-               h * 0.3f, 0, 1.2f);
     d->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32(230, 230, 232, 255), t);
+    // the arrow to the right of the stick
+    ImVec2 a(p.x + s * 1.28f, p.y + s * 0.5f);
+    float r = s * 0.17f;
+    const ImVec2 kDir[4] = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};
+    ImVec2 f = kDir[dir], n(-f.y, f.x);
+    d->AddTriangleFilled(ImVec2(a.x + f.x * r, a.y + f.y * r), ImVec2(a.x - f.x * r + n.x * r, a.y - f.y * r + n.y * r),
+                         ImVec2(a.x - f.x * r - n.x * r, a.y - f.y * r - n.y * r), kAccent);
 }
 
 // a binding's name: the mouse's own, else the keyboard layout's name for the key
@@ -1069,10 +1101,14 @@ void PageControls(Ui& ui) {
         Check("##minv", &ui.s.mouse_invert_y);
         Desc(nullptr);
     }
-    Desc("Click a slot, then press a key, a mouse button or turn the wheel. Right click a slot to clear it. "
-         "Applied when the game starts. F9 in the game shows the frame counter.");
+    Desc("Each row is a button or stick of the game's Xbox controller (the badge), pressed by the keys beside it. "
+         "Click a slot, then press a key, a mouse button or turn the wheel. Right click a slot to clear it. "
+         "Applied when the game starts. F9 in the game shows the frame counter. When the game asks for a name, "
+         "letters, digits, Backspace and the arrows type it, Enter chooses OK and Esc goes back.");
     for (int i = 0; i < kKeyActions; i++) {
         Row(i < 16 ? kGameButtons[i] : kStickActions[i - 16]);
+        KeyActionGlyph(i);
+        ImGui::SameLine();
         for (int j = 0; j < 2; j++) {
             ImGui::PushID(1000 + i * 2 + j);
             bool waiting = ui.capture == i * 2 + j;

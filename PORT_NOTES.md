@@ -351,8 +351,24 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   1500 counts/s full at sensitivity 50; cursor hidden (WM_SETCURSOR) and clipped while focused. Tested with
   tools/sendinput.ps1: 500 counts right turned the camera right ~90 deg, W walked forward.
 - IndyPort Controls: mouse look, sensitivity, invert, two slots per action (click then press a key / mouse button /
-  wheel; right click clears), reset. Tested with tools/clickat.ps1 (real clicks; its Y is the window image's, which
+  wheel; right click clears), reset. Each keyboard row shows the game's Xbox button it presses as today's controller
+  labels it (Black RB, White LB, Start Menu, Back View; the gamepad mapping does not apply to keys) and the stick
+  directions as LS / RS with an arrow. Tested with tools/clickat.ps1 (real clicks; its Y is the window image's, which
   lands one row higher: the title bar is not counted).
+
+## Typing names (2026-11-10)
+
+- New Game's "Enter a name" box is the game's text box class (vtable 0x58DD00, made by 0x22D600, 0x160 bytes):
+  ASCII text at +0x2C, charset index +0x28 (0x632710, A-Z 0-9 for the pad), cursor +0x12C, limit +0x13C (8 there).
+  0x22D700 (thiscall, one DIK code, ret 4) is its key handler for the Xbox keyboard: Backspace 0x0E, Delete 0xD3,
+  arrows, Home/End; other keys through the DIK table at 0x64B520 (0x64B620 shifted), made upper case. 0x22DCE0 runs
+  every frame while the box is up (found by counting calls of the class's methods).
+- src/game/hooks.cpp: after 0x22DCE0, keys queued by keyboard.cpp are fed to 0x22D700 on the game's thread.
+  keyboard.cpp: while the box was seen in the last 200 ms, WM_KEYDOWN of letters, digits, Backspace, Delete, Home,
+  End, left/right go to the queue as DIK codes (MapVirtualKey, 0x80 for extended) and those keys' bindings are off;
+  Esc presses B (leave), Enter and up/down keep their bindings (OK). The game has no space in names.
+- Tested: slot 6, Backspace x5 and M E R T space 7 with real keys gave MERT7; Esc went back to the book; no save
+  written. In Ceylon (Load Game, slot 1) W still walks.
 
 ## Extras (2026-11-09)
 

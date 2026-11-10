@@ -61,3 +61,32 @@ X86_FUNC(sub_00323160) {
         X86_MEMF32(0x6D75F4) = v;
     }
 }
+
+
+namespace game {
+bool TakeTextKey(uint8_t& dik);  // keyboard.cpp: keys typed while a name box is up
+void NoteTextBox();              // keyboard.cpp: a name box is up this frame
+}
+
+// Typing names (New Game's "Enter a name"). The game's text box class (vtable 0x58DD00) keeps its text at +0x2C,
+// its cursor at +0x12C and its length limit at +0x13C, and 0x22D700 is its key handler: DirectInput key codes,
+// letters and digits through the game's key table (0x64B520, made upper case), Backspace, Delete, the arrows. Only
+// an Xbox keyboard ever fed it. 0x22DCE0 runs each frame while the box is up: after it, the keys typed on the PC
+// keyboard are handed to the box's own handler on the game's thread, so the game edits the name itself.
+X86_EXTERN_FUNC(__imp__sub_0022DCE0);
+X86_EXTERN_FUNC(__imp__sub_0022D700);
+X86_FUNC(sub_0022DCE0) {
+    uint32_t self = ctx.ecx;
+    __imp__sub_0022DCE0(ctx, base);
+    if (!self || X86_MEM32(self) != 0x58DD00u) return;
+    game::NoteTextBox();
+    uint8_t dik;
+    while (game::TakeTextKey(dik)) {
+        X86Context saved = ctx;
+        X86_PUSH32(uint32_t(dik));
+        X86_PUSH32(0x0022DCE0u);  // a return address: the handler returns with ret 4
+        ctx.ecx = self;
+        __imp__sub_0022D700(ctx, base);
+        ctx = saved;
+    }
+}
