@@ -400,6 +400,32 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   camera came out of it facing the same way.
 - tools/ap_load_slot1.sh: Load Game, slot 1, Ceylon, with pixel checks (tools/checkpx.ps1) before each A.
 
+## Keyboard and mouse, round two (2026-11-10)
+
+- Default bindings are the user's own: A left mouse / Enter, B Space / Backspace, X F, Y E, Black Tab, White R,
+  LT left Alt, RT right mouse, d-pad arrows (1, 2, wheel), Start Esc / Enter, Back Backspace, LS click Z, RS click
+  middle mouse, W A S D, I J K L (keyboard.cpp kDefaults, launcher kDefaultKeys).
+- Cursor: it showed because the runtime's window procedure hands messages to ImGui (the FPS overlay) first, and
+  ImGui answered WM_SETCURSOR with the arrow; fps.cpp sets ImGuiConfigFlags_NoMouseCursorChange, keyboard.cpp hides
+  the cursor on WM_SETCURSOR and clears the window class's cursor. Checked with GetCursorInfo (DPI aware): hidden in
+  play and in the pause menu.
+- Alt: WM_SYSKEYDOWN / WM_SYSKEYUP / WM_SYSCHAR and SC_KEYMENU are swallowed (Alt+F4 still closes), so Alt (first
+  person by default) and Alt with a letter no longer start the window menu's modal loop. Holding Alt 10-16 s with
+  real input kept LT at 255 every frame (logged) and first person on; the one drop seen came from the test tool
+  activating the window between calls.
+- First person (LT): 0x108450 (this = camera) keeps real angles, yaw [+0x5C] and pitch [+0x58] (clamped there),
+  driven by speeds [+0x70]/[+0x74] from the stick (cubed, with inertia); it gathers input through 0x1040B0 (return
+  0x10850A). hooks.cpp adds the mouse to the angles before it runs (yaw + counts, pitch + counts, both checked on
+  screenshots); the third person hook leaves the mouse to it while it runs.
+- Menus: the player's input is gathered (0x1040B0, any caller) only in play; keyboard.cpp counts mouse buttons, the
+  wheel and mouse movement only within 200 ms of that, so menus take keys only (a left click in the pause menu did
+  nothing).
+- Button icons "Keyboard and mouse" (texture_packs = keyboard_icons): launcher/key_icons.cpp draws the pack with
+  GDI+ into textures/packs/keyboard_icons from the bindings whenever they or the choice change (and at launcher
+  start): key caps with the key's label, a mouse with the bound button lit, W A S D and the arrow keys as small
+  clusters for the sticks and the d-pad, the mouse for the right stick while mouse look is on. The menus' 32x32 A B
+  X Y use a key bound to the button rather than a mouse button. Seen in Ceylon: "Move the [W A S D] thumbstick".
+
 ## Extras (2026-11-09)
 
 - fov (70-120%, app::Settings): the 0x323160 hook scales the tangents of both half angles (0x6D75F0 and 0x6D75F4)

@@ -80,6 +80,9 @@ bool g_show_fps = false;
 
 // the frame counter in the top left corner, each host frame inside ImGui
 void FpsOverlay(double) {
+    // the runtime's window hands messages to ImGui first, which would set the arrow cursor on every WM_SETCURSOR;
+    // the game shows no cursor (keyboard.cpp takes WM_SETCURSOR)
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     if (!g_show_fps || !kernel::g_base) return;
     static uint32_t last_swaps = 0;
     static auto last = std::chrono::steady_clock::now();

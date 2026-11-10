@@ -94,6 +94,9 @@ X86_FUNC(sub_0022DCE0) {
 namespace game {
 void TakeMouseCamera(float& yaw, float& pitch, bool& mouse_has_camera);  // keyboard.cpp: mouse movement, radians
 void NoteCameraStick();                                                // keyboard.cpp: the stick moved the camera
+void NoteGameplay();                                                   // keyboard.cpp: the player's input is read
+bool FirstPersonLately();                                              // keyboard.cpp: the first person hook ran
+void NoteFirstPerson();
 }
 
 // Mouse look, one to one. The third person camera's update (0x10B360, this = the camera) has no yaw angle: each
@@ -114,7 +117,8 @@ X86_FUNC(sub_0010B360) {
     uint32_t self = ctx.ecx;
     float yaw = 0, pitch = 0;
     bool steers = false;
-    game::TakeMouseCamera(yaw, pitch, steers);
+    // in first person this camera still runs, but the first person camera takes the mouse
+    if (!game::FirstPersonLately()) game::TakeMouseCamera(yaw, pitch, steers);
     g_mouse_yaw = yaw;
     g_mouse_steers = steers;
     if (pitch != 0) {
@@ -140,7 +144,24 @@ X86_EXTERN_FUNC(__imp__sub_001040B0);
 X86_FUNC(sub_001040B0) {
     uint32_t ret = X86_MEM32(ctx.esp), look = X86_MEM32(ctx.esp + 8);  // the camera's x and y
     __imp__sub_001040B0(ctx, base);
+    game::NoteGameplay();
     if (ret != 0x10B3F9u) return;
     if (X86_MEMF32(look) != 0 || X86_MEMF32(look + 4) != 0) game::NoteCameraStick();
     else if (g_mouse_steers) X86_MEMF32(look) = 1e-4f;
+}
+
+// First person (LT): 0x108450 (this = the camera) keeps real angles, yaw at [this+0x5C] and pitch at [this+0x58]
+// (kept within limits there), turned by speeds [+0x70] and [+0x74] that the stick drives, cubed and with inertia.
+// The mouse adds to the angles directly, as in a first person shooter.
+X86_EXTERN_FUNC(__imp__sub_00108450);
+X86_FUNC(sub_00108450) {
+    uint32_t self = ctx.ecx;
+    game::NoteFirstPerson();
+    float yaw = 0, pitch = 0;
+    bool steers = false;
+    game::TakeMouseCamera(yaw, pitch, steers);
+    float y = X86_MEMF32(self + 0x5C), p = X86_MEMF32(self + 0x58);
+    if (yaw != 0 && std::isfinite(y)) X86_MEMF32(self + 0x5C) = y - yaw;
+    if (pitch != 0 && std::isfinite(p)) X86_MEMF32(self + 0x58) = p + pitch;
+    __imp__sub_00108450(ctx, base);
 }

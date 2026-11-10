@@ -26,6 +26,8 @@
 
 #include <toml++/toml.hpp>
 
+#include "key_icons.h"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -266,12 +268,12 @@ const char* kGameButtons[16] = {"A: Attack 2",          "B: Jump / swim",       
 constexpr int kKeyActions = 24;
 constexpr int kWheelUp = 0x100, kWheelDown = 0x101;
 using KeyBindings = std::array<std::array<int, 2>, kKeyActions>;
-constexpr KeyBindings kDefaultKeys = {{{'Q', VK_RETURN}, {VK_SPACE, VK_BACK}, {VK_LBUTTON, 0}, {'E', 0},
-                                      {'G', 0}, {'R', 0}, {'F', 0}, {VK_RBUTTON, 0},
-                                      {VK_UP, '1'}, {VK_DOWN, '2'}, {VK_LEFT, kWheelUp}, {VK_RIGHT, kWheelDown},
-                                      {VK_ESCAPE, VK_RETURN}, {VK_TAB, 0}, {'V', 0}, {VK_MBUTTON, 0},
-                                      {'W', 0}, {'S', 0}, {'A', 0}, {'D', 0},
-                                      {'I', 0}, {'K', 0}, {'J', 0}, {'L', 0}}};
+constexpr KeyBindings kDefaultKeys = {{{VK_LBUTTON, VK_RETURN},  {VK_SPACE, VK_BACK}, {'F', 0},        {'E', 0},
+                                      {VK_TAB, 0},              {'R', 0},            {VK_LMENU, 0},   {VK_RBUTTON, 0},
+                                      {VK_UP, '1'},             {VK_DOWN, '2'},      {VK_LEFT, kWheelUp}, {VK_RIGHT, kWheelDown},
+                                      {VK_ESCAPE, VK_RETURN},   {VK_BACK, 0},        {'Z', 0},        {VK_MBUTTON, 0},
+                                      {'W', 0},                 {'S', 0},            {'A', 0},        {'D', 0},
+                                      {'I', 0},                 {'K', 0},            {'J', 0},        {'L', 0}}};
 const char* kStickActions[8] = {"Move forward", "Move back", "Move left", "Move right",
                                 "Camera up",    "Camera down", "Camera left", "Camera right"};
 const char* kControllerButtons[16] = {"A",       "B",          "X",          "Y",
@@ -415,6 +417,13 @@ void SaveSettings(const Settings& s) {
     t.insert_or_assign("mouse_invert_y", s.mouse_invert_y);
     std::ofstream out(SettingsFile());
     out << t << "\n";
+}
+
+// the keyboard icon pack follows the bindings: drawn again when they or the choice of icons change (key_icons.cpp)
+void UpdateKeyIcons(const Settings& s) {
+    if (s.texture_packs.find("keyboard_icons") == std::string::npos) return;
+    if (!MakeKeyIcons(ExeDir() / "textures" / "packs" / "keyboard_icons", s.keys, s.mouse_look))
+        Log("icons: could not draw the keyboard icons");
 }
 
 // ---- saves
@@ -1033,12 +1042,16 @@ void PageControls(Ui& ui) {
     Heading("BUTTON ICONS");
     Row("In-game button icons");
     {
-        bool modern = ui.s.texture_packs.find("modern_buttons") != std::string::npos;
-        int cur = modern ? 0 : 1;
-        if (Combo("##icons", &cur, {"Modern Xbox", "Original Xbox"})) ui.s.texture_packs = cur == 0 ? "modern_buttons" : "";
+        int cur = ui.s.texture_packs.find("keyboard_icons") != std::string::npos   ? 2
+                  : ui.s.texture_packs.find("modern_buttons") != std::string::npos ? 0
+                                                                                     : 1;
+        if (Combo("##icons", &cur, {"Modern Xbox", "Original Xbox", "Keyboard and mouse"}))
+            ui.s.texture_packs = cur == 0 ? "modern_buttons" : cur == 2 ? "keyboard_icons" : "";
     }
     Desc("Modern Xbox shows today's controller buttons (LB and RB for White and Black, LT, RT, LS, RS) in the "
-         "game's prompts and menus, drawn sharp for high resolutions. Applied when the game starts.");
+         "game's prompts and menus, drawn sharp for high resolutions. Keyboard and mouse shows the keys and mouse "
+         "buttons you bound below instead (in menus, a key rather than a mouse button, as menus take keys only). "
+         "Applied when the game starts.");
     Row("Vibration");
     Slider("##rumble", &ui.s.rumble, 0, 100, 5, "%d%%");
     Desc("Strength of the controller's vibration; 0% turns it off.");
@@ -1092,9 +1105,9 @@ void PageControls(Ui& ui) {
     Heading("KEYBOARD AND MOUSE");
     Row("Mouse look");
     Check("##mlook", &ui.s.mouse_look);
-    Desc("The mouse turns the camera one to one, as far as it moves, and the camera stays where you leave it; the "
-         "right stick or the camera keys bring back the game's own camera that swings behind Indy. The cursor is "
-         "hidden and kept inside the game window while it has focus.");
+    Desc("The mouse turns the camera one to one, as far as it moves, in third and first person, and the camera "
+         "stays where you leave it; the right stick or the camera keys bring back the game's own camera that swings "
+         "behind Indy. The mouse counts only while playing: menus take keys. There is no cursor in the game window.");
     if (ui.s.mouse_look) {
         Row("Mouse sensitivity");
         Slider("##msens", &ui.s.mouse_sensitivity, 1, 100, 1, "%d");
@@ -1514,6 +1527,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     ImGui_ImplDX11_Init(g_dev, g_ctx);
 
     Ui ui;
+    UpdateKeyIcons(ui.s);  // a pack missing or from another build
     ui.window = hwnd;
     Log("IndyPort %s, game: %s (%s)", kVersion, ui.game.what.c_str(), ui.game.where.c_str());
     // INDY_LAUNCHER_PAGE=0..5 opens a page at once (screenshots)
@@ -1626,6 +1640,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         if (!(ui.s == ui.saved)) {
             SaveSettings(ui.s);
             ui.saved = ui.s;
+            UpdateKeyIcons(ui.s);
         }
 
         ImGui::Render();

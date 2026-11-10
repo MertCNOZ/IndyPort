@@ -42,12 +42,12 @@ constexpr uint32_t kWheelUp = 0x100, kWheelDown = 0x101;
 using Bindings = std::array<std::array<uint32_t, 2>, kActions>;
 
 // A B X Y Black White LT RT, d-pad up down left right, Start Back, LS RS, move U D L R, camera U D L R
-constexpr Bindings kDefaults = {{{'Q', VK_RETURN},       {VK_SPACE, VK_BACK}, {VK_LBUTTON, 0}, {'E', 0},
-                                 {'G', 0},               {'R', 0},            {'F', 0},        {VK_RBUTTON, 0},
-                                 {VK_UP, '1'},           {VK_DOWN, '2'},      {VK_LEFT, kWheelUp}, {VK_RIGHT, kWheelDown},
-                                 {VK_ESCAPE, VK_RETURN}, {VK_TAB, 0},         {'V', 0},        {VK_MBUTTON, 0},
-                                 {'W', 0},               {'S', 0},            {'A', 0},        {'D', 0},
-                                 {'I', 0},               {'K', 0},            {'J', 0},        {'L', 0}}};
+constexpr Bindings kDefaults = {{{VK_LBUTTON, VK_RETURN},  {VK_SPACE, VK_BACK}, {'F', 0},        {'E', 0},
+                                 {VK_TAB, 0},              {'R', 0},            {VK_LMENU, 0},   {VK_RBUTTON, 0},
+                                 {VK_UP, '1'},             {VK_DOWN, '2'},      {VK_LEFT, kWheelUp}, {VK_RIGHT, kWheelDown},
+                                 {VK_ESCAPE, VK_RETURN},   {VK_BACK, 0},        {'Z', 0},        {VK_MBUTTON, 0},
+                                 {'W', 0},                 {'S', 0},            {'A', 0},        {'D', 0},
+                                 {'I', 0},                 {'K', 0},            {'J', 0},        {'L', 0}}};
 
 // the game's buttons as Pad places: an analog index, or -1 and a digital mask (pad_map.cpp's order)
 struct Place {
@@ -85,6 +85,17 @@ bool Typing() { return NowMs() - g_textbox_seen.load() < 200; }
 std::atomic<int64_t> g_camera_seen{0}, g_mouse_moved{0}, g_stick_moved{0};
 
 bool CameraHooked() { return NowMs() - g_camera_seen.load() < 200; }
+
+// the player's input was read in the last 200 ms (src/game/hooks.cpp, 0x1040B0): playing, not in a menu. The mouse
+// counts only then: its buttons, wheel and movement do nothing in menus, which are played with keys
+std::atomic<int64_t> g_gameplay_seen{0}, g_first_person_seen{0};
+
+bool Gameplay() { return NowMs() - g_gameplay_seen.load() < 200; }
+
+bool MouseCode(uint32_t code) {
+    return code == VK_LBUTTON || code == VK_RBUTTON || code == VK_MBUTTON || code == VK_XBUTTON1 ||
+           code == VK_XBUTTON2 || code == kWheelUp || code == kWheelDown;
+}
 
 // the keys that type into a name box, and their DirectInput codes (scan codes, extended ones with 0x80)
 bool TextKey(uint32_t vk) {
@@ -132,6 +143,7 @@ WheelPress g_wheel[2];
 bool Held(uint32_t code, const bool wheel[2]) {
     if (!code) return false;
     if (code < 0x100 && (TextKey(code) || code == VK_ESCAPE) && Typing()) return false;  // typing a name
+    if (MouseCode(code) && !Gameplay()) return false;                                     // menus: keys only
     if (code == kWheelUp) return wheel[0];
     if (code == kWheelDown) return wheel[1];
     return code < 0x100 && Down(int(code));
@@ -186,6 +198,12 @@ void TakeMouseCamera(float& yaw, float& pitch, bool& mouse_has_camera) {
 
 void NoteCameraStick() { g_stick_moved = NowMs(); }
 
+void NoteGameplay() { g_gameplay_seen = NowMs(); }
+
+void NoteFirstPerson() { g_first_person_seen = NowMs(); }
+
+bool FirstPersonLately() { return NowMs() - g_first_person_seen.load() < 100; }
+
 bool TakeTextKey(uint8_t& dik) {
     std::lock_guard l(g_text_lock);
     if (g_text_keys.empty()) return false;
@@ -233,6 +251,8 @@ void MouseWindow(void* hwnd) {
     g_hwnd = static_cast<HWND>(hwnd);
     RAWINPUTDEVICE rid{0x01, 0x02, 0, g_hwnd};  // generic desktop, mouse
     if (!RegisterRawInputDevices(&rid, 1, sizeof(rid))) LOGR("input: raw mouse input unavailable (%lu)", GetLastError());
+    // no cursor over the game window at all: the game is played with keys and the mouse's movement, never a pointer
+    SetClassLongPtrW(g_hwnd, GCLP_HCURSOR, 0);
 }
 
 // the game window's messages: raw mouse movement, the wheel, no cursor over the window while mouse look holds it
@@ -263,8 +283,28 @@ bool MouseMessage(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t*
             *result = 0;
             return true;
         }
+        // Alt is a key like any other here (bound to first person by default): Windows would take Alt and Alt with
+        // a letter as the window menu's keys (beeps, a modal menu loop that eats the keys held). Alt+F4 still closes
+        case WM_SYSKEYDOWN:
+        case WM_SYSKEYUP:
+            if (wp == VK_F4) return false;
+            if (msg == WM_SYSKEYDOWN && Typing() && TextKey(uint32_t(wp))) {
+                std::lock_guard l(g_text_lock);
+                if (g_text_keys.size() < 64) g_text_keys.push_back(DirectInputCode(uint32_t(wp)));
+            }
+            *result = 0;
+            return true;
+        case WM_SYSCHAR:
+            *result = 0;
+            return true;
+        case WM_SYSCOMMAND:
+            if ((wp & 0xFFF0) == SC_KEYMENU) {
+                *result = 0;
+                return true;
+            }
+            return false;
         case WM_SETCURSOR:
-            if (g_mouse_look && LOWORD(lp) == HTCLIENT && hwnd == g_hwnd) {
+            if (LOWORD(lp) == HTCLIENT) {
                 SetCursor(nullptr);
                 *result = TRUE;
                 return true;
@@ -323,9 +363,10 @@ void KeyboardPad(int port, input::Pad& pad) {
     float dt = std::clamp(std::chrono::duration<float>(now - last).count(), 1e-4f, 0.1f);
     last = now;
     float mx = float(g_dx.exchange(0)) / dt, my = float(g_dy.exchange(0)) / dt;
-    if (CameraHooked()) {
-        // the third person camera turns by the mouse itself (TakeMouseCamera): no stick
+    if (CameraHooked() || !Gameplay()) {
+        // the cameras turn by the mouse themselves (TakeMouseCamera); in menus the mouse does nothing
         vx = vy = 0;
+        if (!Gameplay()) g_cam_dx = 0, g_cam_dy = 0;
         return;
     }
     g_cam_dx = 0;
