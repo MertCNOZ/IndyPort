@@ -428,7 +428,7 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   clusters for the sticks and the d-pad, the mouse for the right stick while mouse look is on. The menus' 32x32 A B
   X Y use a key bound to the button rather than a mouse button. Seen in Ceylon: "Move the [W A S D] thumbstick".
 
-## Launcher 0.5.0: languages, updates, Advanced page (2026-11-10)
+## Launcher 1.0.0 (first public release): languages, updates, Advanced page (2026-11-10)
 
 - Sidebar: "Indiana Jones and the Emperor's Tomb PC Port by MertCNOZ" under the logo; a GitHub button (top right of
   the Home banner) opens github.com/MertCNOZ/IndyPort.
