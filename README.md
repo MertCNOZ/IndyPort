@@ -1,10 +1,14 @@
 # IndyPort: Indiana Jones and the Emperor's Tomb on PC
 
 An unofficial native PC port of the original Xbox version of *Indiana Jones and the Emperor's Tomb* (USA), made by
-statically recompiling the game's code with [Xbox XBE Recomp](https://github.com/TGP482/XboxXBE-Recomp). It comes
+statically recompiling the game's code with [Xbox XBE Recomp](https://github.com/TGP482/XboxXBERecomp). It comes
 with **IndyPort**, a launcher for choosing your copy of the game and setting up graphics and controls.
 
 PC port by [MertCNOZ](https://github.com/MertCNOZ).
+
+**[Download the latest release](https://github.com/MertCNOZ/IndyPort/releases/latest)**
+
+![The IndyPort launcher](docs/launcher_home.png)
 
 > [!NOTE]
 > No game files are included. The port runs from your own legally acquired copy of the game: a disc image (`.iso`)
@@ -62,6 +66,12 @@ Without a choice in IndyPort, the port also finds the game in an `assets` folder
 - **Updates**: IndyPort looks for a new release on GitHub when it starts (this can be turned off) and installs it
   with one click. Only the port's own files are replaced: saves, settings, texture packs and your game files stay.
 
+### Screenshots
+
+| Graphics | Controls |
+| --- | --- |
+| ![Graphics settings](docs/launcher_graphics.png) | ![Controls and key bindings](docs/launcher_controls.png) |
+
 ## System requirements
 - Windows 10 or 11, 64-bit
 - A graphics card with Direct3D 12
@@ -77,7 +87,7 @@ Without a choice in IndyPort, the port also finds the game in an `assets` folder
 
 ## Credits
 
-- [Xbox XBE Recomp](https://github.com/TGP482/XboxXBE-Recomp) by TGP482, the recompiler and runtime this is built on.
+- [Xbox XBE Recomp](https://github.com/TGP482/XboxXBERecomp) by TGP482, the recompiler and runtime this is built on.
 - [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) for the overridable function layout and instruction hooks.
 - [Zydis](https://github.com/zyantific/zydis), [toml++](https://github.com/marzer/tomlplusplus),
   [Dear ImGui](https://github.com/ocornut/imgui) and [SDL](https://github.com/libsdl-org/SDL).
