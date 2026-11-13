@@ -297,6 +297,7 @@ struct Settings {
     bool full_width = true;
     int fov = 100;
     bool fxaa = false;
+    bool seam_fill = true;
     int rumble = 100;
     bool custom_textures = true;
     bool dump_textures = false;
@@ -340,6 +341,7 @@ Settings LoadSettings() {
         s.full_width = t["full_width"].value_or(true);
         s.fov = std::clamp(int(t["fov"].value_or(int64_t(100))), 70, 120);
         s.fxaa = t["fxaa"].value_or(false);
+        s.seam_fill = t["seam_fill"].value_or(true);
         s.rumble = std::clamp(int(t["rumble"].value_or(int64_t(100))), 0, 100);
         s.custom_textures = t["custom_textures"].value_or(true);
         s.dump_textures = t["dump_textures"].value_or(false);
@@ -405,6 +407,7 @@ void SaveSettings(const Settings& s) {
     t.insert_or_assign("full_width", s.full_width);
     t.insert_or_assign("fov", int64_t(s.fov));
     t.insert_or_assign("fxaa", s.fxaa);
+    t.insert_or_assign("seam_fill", s.seam_fill);
     t.insert_or_assign("rumble", int64_t(s.rumble));
     t.insert_or_assign("custom_textures", s.custom_textures);
     t.insert_or_assign("dump_textures", s.dump_textures);
@@ -855,6 +858,10 @@ void PageGraphics(Ui& ui) {
     Row("Anti-aliasing (FXAA)");
     Check("##fxaa", &s.fxaa);
     Desc("Smooths jagged edges at almost no cost. It softens textures a little; sharpening makes up for it.");
+    Row("Fill seams");
+    Check("##seams", &s.seam_fill);
+    Desc("Fills the hairline cracks between the level's surfaces that show at high resolutions as pale dots along "
+         "the edges of stones and boxes.");
     Row("Sharpening");
     Slider("##sharpen", &s.sharpen, 0, 100, 5, "%d%%");
     Desc("Contrast adaptive sharpening of the final picture: the game's low resolution textures look crisper, "

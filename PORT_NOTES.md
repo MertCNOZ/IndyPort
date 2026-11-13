@@ -428,6 +428,24 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   clusters for the sticks and the d-pad, the mouse for the right stick while mouse look is on. The menus' 32x32 A B
   X Y use a key bound to the button rather than a mouse button. Seen in Ceylon: "Move the [W A S D] thumbstick".
 
+## Seam fill (2026-11-13, v1.1.0)
+
+- Pale dots in rows along the edges of stones, beams and boxes at some angles (reported at 4K; their size followed
+  the render scale: render target pixels). They are gaps between a level's triangles (corners not bit equal,
+  T junctions) through which the cleared background shows: nothing is drawn behind the inside of a stone.
+- Ruled out on the way, and reverted: `precise` on the fixed function clip position and a tolerant EQUAL test for
+  second passes (a debug mode painting EQUAL passes black showed no failing pixels on the stones); CPU writes to
+  the frame (counted: none during play); conservative rasterization (closes the gaps but extrapolates texture
+  coordinates at edges: new dashes on Indy's hat band); an image fill keyed on "farther than both sides" (caught
+  the holes in alpha tested foliage).
+- d3d12.cpp SeamFill (setting `seam_fill`, default on; launcher Graphics, "Fill seams"): before the frame is shown,
+  when it is the colour target last drawn with a depth target of its size and the scene was drawn since the last
+  frame, a full screen pass (kSeamHlsl) over a copy of it: a pixel whose depth is still the clear value (never
+  drawn) takes the colour of the pixels across it when those, and the next ones outward, were drawn on one plane
+  (reversed depth linear on screen; 0.1% tolerance), for gaps one or two pixels wide in four directions. Checked
+  with a debug colour in Ceylon: nothing on the rock or the bushes in front of it; only one or two pixel holes in
+  distant foliage against the sky (the sky writes no depth).
+
 ## Launcher 1.0.0 (first public release): languages, updates, Advanced page (2026-11-10)
 
 - Sidebar: "Indiana Jones and the Emperor's Tomb PC Port by MertCNOZ" under the logo; a GitHub button (top right of
