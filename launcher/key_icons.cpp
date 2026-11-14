@@ -1,8 +1,9 @@
 // The "keyboard_icons" texture pack: the game's controller button icons drawn as the keys and mouse buttons bound to
 // them (Controls page), so the game's prompts show what to press on a keyboard. It takes the place of the same game
 // textures as packs/modern_buttons (tools/make_button_icons.ps1 draws that one; the hashes and the atlas boxes are
-// the same): the 32x32 A, B, X, Y of the menus and prompts, and the 128x256 icon atlas. Drawn with GDI+ at 8 times
-// the game's size whenever the bindings or the icon choice change.
+// the same): the 32x32 A, B, X, Y of the menus and prompts, and the icon atlas, 128x256 on the USA disc and 256x256
+// on the Europe disc (more icons: the triggers and sticks lettered for French, Italian and Spanish). Drawn with GDI+
+// at 8 times the game's size whenever the bindings or the icon choice change.
 #define NOMINMAX
 #include <windows.h>
 #include <objidl.h>
@@ -12,6 +13,7 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <span>
 #include <string>
 
 #include "key_icons.h"
@@ -256,10 +258,11 @@ bool MakeKeyIcons(const fs::path& dir, const KeyIconBindings& keys, bool mouse_l
         ok &= SavePng(b, dir / (std::string("32x32_") + singles[i] + "_DXT5.png"));
     }
 
-    // the atlas: the game's boxes (x, y, w, h), the icon each was and what takes its place
+    // the atlases: the game's boxes (x, y, w, h), the icon each was and what takes its place; buttons by their index
+    // (A B X Y, black, white, LT, RT)
     struct Box { int x, y, w, h; int what; float arg; };
     enum { kButton, kArrow, kMoveKeys, kLookKeys, kTurn, kPadKeys };
-    const Box atlas[] = {
+    const Box atlas_usa[] = {
         {0, 0, 23, 23, kButton, 0},   {25, 0, 23, 23, kButton, 1},  {50, 0, 23, 23, kButton, 2},   // A B X
         {0, 33, 23, 23, kButton, 3},  {31, 33, 20, 23, kButton, 6}, {53, 33, 20, 23, kButton, 7},  // Y LT RT
         {75, 34, 22, 21, kArrow, 0},  {1, 68, 19, 19, kArrow, 45},  {22, 66, 21, 22, kArrow, 90},
@@ -267,10 +270,24 @@ bool MakeKeyIcons(const fs::path& dir, const KeyIconBindings& keys, bool mouse_l
         {22, 100, 21, 22, kArrow, 270}, {46, 100, 19, 19, kArrow, 315},
         {67, 99, 22, 22, kMoveKeys, 0}, {0, 132, 23, 24, kTurn, 0},  {25, 132, 22, 22, kLookKeys, 0},  // LS turn RS
         {50, 134, 19, 19, kPadKeys, 0}, {72, 133, 18, 21, kButton, 5}, {1, 167, 18, 20, kButton, 4}};  // d-pad LB RB
-    gp::Bitmap b(int(128 * kScale), int(256 * kScale), PixelFormat32bppARGB);
+    const Box atlas_europe[] = {
+        {0, 0, 23, 23, kButton, 0},    {25, 0, 23, 23, kButton, 1},   {50, 0, 23, 23, kButton, 2},   // A B X
+        {75, 0, 23, 23, kButton, 3},   {106, 0, 20, 23, kButton, 6},  {128, 0, 20, 23, kButton, 7},  // Y LT RT
+        {150, 1, 22, 21, kArrow, 0},   {176, 2, 19, 19, kArrow, 45},  {197, 0, 21, 22, kArrow, 90},
+        {0, 36, 19, 19, kArrow, 135},  {23, 34, 22, 21, kArrow, 180}, {47, 35, 19, 19, kArrow, 225},
+        {69, 34, 21, 22, kArrow, 270}, {93, 34, 19, 19, kArrow, 315},
+        {114, 33, 22, 22, kMoveKeys, 0}, {138, 33, 23, 23, kTurn, 0}, {163, 33, 22, 22, kLookKeys, 0},  // LS turn RS
+        {188, 35, 19, 19, kPadKeys, 0}, {210, 35, 18, 20, kButton, 5}, {1, 68, 18, 20, kButton, 4},   // d-pad LB RB
+        // LT RT LS RS lettered in French (G D), Italian (S D) and Spanish (I D)
+        {23, 66, 20, 23, kButton, 6},  {45, 66, 20, 23, kButton, 7},  {67, 66, 22, 22, kMoveKeys, 0},
+        {91, 66, 22, 22, kLookKeys, 0}, {115, 66, 20, 23, kButton, 6}, {137, 66, 20, 23, kButton, 7},
+        {159, 66, 22, 22, kMoveKeys, 0}, {183, 66, 22, 22, kLookKeys, 0}, {207, 66, 20, 23, kButton, 6},
+        {0, 99, 20, 23, kButton, 7},   {22, 99, 22, 22, kMoveKeys, 0}, {46, 99, 22, 22, kLookKeys, 0}};
+    auto draw = [&](const Box* atlas, size_t n, int w, int h, const char* name) {
+    gp::Bitmap b(int(w * kScale), int(h * kScale), PixelFormat32bppARGB);
     gp::Graphics g(&b);
     Smooth(g);
-    for (const Box& x : atlas) {
+    for (const Box& x : std::span(atlas, n)) {
         gp::RectF r(x.x * kScale, x.y * kScale, x.w * kScale, x.h * kScale);
         switch (x.what) {
             case kButton: Binding(g, r, primary(int(x.arg))); break;
@@ -288,6 +305,9 @@ bool MakeKeyIcons(const fs::path& dir, const KeyIconBindings& keys, bool mouse_l
                 break;
         }
     }
-    ok &= SavePng(b, dir / "128x256_ae7c8bc40d1623af_DXT5.png");
+    ok &= SavePng(b, dir / name);
+    };
+    draw(atlas_usa, std::size(atlas_usa), 128, 256, "128x256_ae7c8bc40d1623af_DXT5.png");
+    draw(atlas_europe, std::size(atlas_europe), 256, 256, "256x256_580cbc930c7d23a5_DXT5.png");
     return ok;
 }

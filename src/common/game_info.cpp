@@ -105,5 +105,6 @@ const app::GameInfo app::kGame = {
     .rumble = game::Rumble,                   // changes a rumble before it is set
 #ifdef INDY_EU
     .cache = "Z_EU",  // the Europe release installs its own data (other files, five languages) to Z:
+    .languages = true,  // English, French, German, Spanish, Italian: the launcher's game language
 #endif
 };

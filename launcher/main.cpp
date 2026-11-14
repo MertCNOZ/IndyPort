@@ -386,6 +386,7 @@ struct Settings {
     int fov = 100;
     bool fxaa = false;
     bool seam_fill = true;
+    int game_language = 1;  // the console's language (XC_LANGUAGE) the game follows: 1 English, 3 German, 4 French, 5 Spanish, 6 Italian
     int rumble = 100;
     bool custom_textures = true;
     bool dump_textures = false;
@@ -430,6 +431,7 @@ Settings LoadSettings() {
         s.fov = std::clamp(int(t["fov"].value_or(int64_t(100))), 70, 120);
         s.fxaa = t["fxaa"].value_or(false);
         s.seam_fill = t["seam_fill"].value_or(true);
+        s.game_language = int(t["game_language"].value_or(int64_t(1)));
         s.rumble = std::clamp(int(t["rumble"].value_or(int64_t(100))), 0, 100);
         s.custom_textures = t["custom_textures"].value_or(true);
         s.dump_textures = t["dump_textures"].value_or(false);
@@ -496,6 +498,7 @@ void SaveSettings(const Settings& s) {
     t.insert_or_assign("fov", int64_t(s.fov));
     t.insert_or_assign("fxaa", s.fxaa);
     t.insert_or_assign("seam_fill", s.seam_fill);
+    t.insert_or_assign("game_language", int64_t(s.game_language));
     t.insert_or_assign("rumble", int64_t(s.rumble));
     t.insert_or_assign("custom_textures", s.custom_textures);
     t.insert_or_assign("dump_textures", s.dump_textures);
@@ -1027,6 +1030,18 @@ void PageGame(Ui& ui) {
             ui.game = CheckGame(ui.s.game_path);
         }
         Desc("Without a choice the port looks for the game in an \"assets\" folder beside it.");
+    }
+    if (ui.game.release == GameRelease::Europe) {
+        // the Europe disc has five languages; the game takes the console's
+        static const int kCodes[] = {1, 4, 3, 5, 6};
+        int pick = 0;
+        for (int i = 0; i < 5; i++)
+            if (kCodes[i] == ui.s.game_language) pick = i;
+        Row("Game language");
+        if (Combo("##gamelang", &pick, {"English", "Fran\xc3\xa7" "ais", "Deutsch", "Espa\xc3\xb1" "ol", "Italiano"}))
+            ui.s.game_language = kCodes[pick];
+        Desc("The language of the game's text and speech (Europe release). The first start in a language installs its "
+             "files, which takes a minute.");
     }
 
     Heading("FOLDERS");

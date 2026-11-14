@@ -1,7 +1,8 @@
 # Draws the "modern_buttons" texture pack: the game's controller button icons as a modern Xbox controller's, drawn
 # here from shapes and text (no game art), at 8 times the game's size. The game's textures are named by the hash the
 # runtime gives their bytes (textures\dumps names them so); each image here takes the place of one:
-#   32x32 A, B, X, Y (pause menu and prompts), and the 128x256 icon atlas (buttons, triggers, sticks, arrows).
+#   32x32 A, B, X, Y (pause menu and prompts), and the icon atlas (buttons, triggers, sticks, arrows): 128x256 on the
+#   USA disc, 256x256 on the Europe disc (with the triggers and sticks lettered for French, Italian and Spanish).
 # The boxes are where the game's atlas has each icon (found from its alpha), times 8.
 # Usage: powershell -ExecutionPolicy Bypass -File tools\make_button_icons.ps1 [out folder]
 param([string]$Out = (Join-Path (Split-Path $PSScriptRoot) "packs\modern_buttons"))
@@ -169,16 +170,27 @@ foreach ($key in $singles.Keys) {
     $g.Dispose(); $b.Dispose()
 }
 
-# the 128x256 atlas: x, y, width, height of each icon in the game's texture, and what it becomes
-$atlas = @(
+# the atlases: x, y, width, height of each icon in the game's texture, and what it becomes
+$usa = @(
     @(0, 0, 23, 23, "face", "A"), @(25, 0, 23, 23, "face", "B"), @(50, 0, 23, 23, "face", "X"), @(0, 33, 23, 23, "face", "Y"),
     @(31, 33, 20, 23, "trigger", "LT"), @(53, 33, 20, 23, "trigger", "RT"),
     @(75, 34, 22, 21, "arrow", 0), @(1, 68, 19, 19, "arrow", 45), @(22, 66, 21, 22, "arrow", 90), @(45, 69, 19, 19, "arrow", 135),
     @(68, 67, 22, 21, "arrow", 180), @(0, 101, 19, 19, "arrow", 225), @(22, 100, 21, 22, "arrow", 270), @(46, 100, 19, 19, "arrow", 315),
     @(67, 99, 22, 22, "stick", "LS"), @(0, 132, 23, 24, "turn", ""), @(25, 132, 22, 22, "stick", "RS"),
     @(50, 134, 19, 19, "dpad", ""), @(72, 133, 18, 21, "bumper", "LB"), @(1, 167, 18, 20, "bumper", "RB"))
+$europe = @(
+    @(0, 0, 23, 23, "face", "A"), @(25, 0, 23, 23, "face", "B"), @(50, 0, 23, 23, "face", "X"), @(75, 0, 23, 23, "face", "Y"),
+    @(106, 0, 20, 23, "trigger", "LT"), @(128, 0, 20, 23, "trigger", "RT"),
+    @(150, 1, 22, 21, "arrow", 0), @(176, 2, 19, 19, "arrow", 45), @(197, 0, 21, 22, "arrow", 90), @(0, 36, 19, 19, "arrow", 135),
+    @(23, 34, 22, 21, "arrow", 180), @(47, 35, 19, 19, "arrow", 225), @(69, 34, 21, 22, "arrow", 270), @(93, 34, 19, 19, "arrow", 315),
+    @(114, 33, 22, 22, "stick", "LS"), @(138, 33, 23, 23, "turn", ""), @(163, 33, 22, 22, "stick", "RS"),
+    @(188, 35, 19, 19, "dpad", ""), @(210, 35, 18, 20, "bumper", "LB"), @(1, 68, 18, 20, "bumper", "RB"),
+    @(23, 66, 20, 23, "trigger", "LT"), @(45, 66, 20, 23, "trigger", "RT"), @(67, 66, 22, 22, "stick", "LS"), @(91, 66, 22, 22, "stick", "RS"),
+    @(115, 66, 20, 23, "trigger", "LT"), @(137, 66, 20, 23, "trigger", "RT"), @(159, 66, 22, 22, "stick", "LS"), @(183, 66, 22, 22, "stick", "RS"),
+    @(207, 66, 20, 23, "trigger", "LT"), @(0, 99, 20, 23, "trigger", "RT"), @(22, 99, 22, 22, "stick", "LS"), @(46, 99, 22, 22, "stick", "RS"))
 $colours = @{ "A" = $green; "B" = $red; "X" = $blue; "Y" = $yellow }
-$b = New-Object System.Drawing.Bitmap (128 * $k), (256 * $k)
+function Draw-Atlas($atlas, $w, $h, $name) {
+$b = New-Object System.Drawing.Bitmap ($w * $k), ($h * $k)
 $g = [Icons]::Begin($b)
 foreach ($i in $atlas) {
     $r = New-Object System.Drawing.RectangleF ($i[0] * $k), ($i[1] * $k), ($i[2] * $k), ($i[3] * $k)
@@ -192,6 +204,9 @@ foreach ($i in $atlas) {
         "turn" { [Icons]::Turn($g, $r) }
     }
 }
-$b.Save((Join-Path $Out "128x256_ae7c8bc40d1623af_DXT5.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+$b.Save((Join-Path $Out $name), [System.Drawing.Imaging.ImageFormat]::Png)
 $g.Dispose(); $b.Dispose()
+}
+Draw-Atlas $usa 128 256 "128x256_ae7c8bc40d1623af_DXT5.png"
+Draw-Atlas $europe 256 256 "256x256_580cbc930c7d23a5_DXT5.png"
 Get-ChildItem $Out | ForEach-Object { "{0} ({1} KB)" -f $_.Name, [int]($_.Length / 1024) }

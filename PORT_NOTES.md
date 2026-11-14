@@ -468,6 +468,15 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
 - Checked (autopilot): boot, install, main menu, the USA saves in the save book, Ceylon from slot 1, widescreen,
   mouse camera. The game's language follows the console's (English); the other four are on the disc.
 - Testing tools take `INDY_EXE=IndyET_EU` (tools/ap_start.ps1, winshot.ps1, sendinput.ps1).
+- Button icons: the Europe disc's icon atlas is 256x256 (hash 580cbc930c7d23a5; USA 128x256 ae7c8bc40d1623af), laid
+  out differently and with LT, RT, LS, RS lettered again for French (G D), Italian (S D) and Spanish (I D). Its boxes
+  (found from the alpha of a dump) are in tools/make_button_icons.ps1 and launcher/key_icons.cpp; the 32x32 A B X Y
+  are the same textures as the USA disc's.
+- Game language: the setting `game_language` (XC_LANGUAGE: 1 English, 3 German, 4 French, 5 Spanish, 6 Italian;
+  launcher Game page, shown for a Europe disc) is what ExQueryNonVolatileSetting reports when GameInfo `languages`
+  is set (the Europe exe); else English. The disc installs that language's data (install_fra.dat, version_fra.dat)
+  over Z:, so each language past English has its own folder: hdd/Z_EU_fr, _de, _es, _it. Checked: French menus and
+  hints after a first start's install.
 
 ## Launcher 1.0.0 (first public release): languages, updates, Advanced page (2026-11-10)
 
