@@ -446,6 +446,29 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   with a debug colour in Ceylon: nothing on the rock or the bushes in front of it; only one or two pixel holes in
   distant foliage against the sky (the sky writes no depth).
 
+## Europe (PAL) release (2026-11-14, v1.1.0)
+
+- Asked for on GitHub. "Indiana Jones and the Emperor's Tomb (Europe) (En,Fr,De,Es,It)": the same XDK (5120) and
+  title ID (0x4C410007) as the USA disc, so saves on E: are shared; entry 0x47E365 (USA 0x47DE05), sha1
+  4e93d98cf3a67b4865c61dcaf3833912a698ab5e. The code is the USA code linked a little differently: XDK library code
+  +0x5A0, .data +0x900/+0x910, the game's own functions shifted by region (-0x110 .. +0x2A0).
+- Its own exe, IndyET_EU.exe (CMakeLists: built when assets_eu/default.xbe and config/game_eu.toml exist; copy the
+  xbe out of the disc with `python tools/xiso_file.py <iso> default.xbe assets_eu/default.xbe`). The same port at
+  that release's addresses: src/game/addresses.h names each hooked function and address (FN_*, k*), INDY_EU picks
+  the Europe column; src/game_eu/hooks.cpp includes src/game/hooks.cpp with INDY_EU set.
+- config/game_eu.toml and the addresses were mapped with tools/map_release.py: code by masked byte matching near the
+  same address (call and jump displacements and anything that looks like an image address left out, the match must
+  be the only one), data through the instructions that load it (several must agree). All 146 config addresses and
+  the hooks' addresses were found.
+- The disc installs its data to Z: (install_pal.dat; USA install.dat), and skips the install when files are there:
+  with the USA data in hdd/Z, the title logo was a green and white checker texture. GameInfo `cache` (SDK) gives
+  the Europe exe its own Z folder, hdd/Z_EU; E: (saves) stays shared.
+- Launcher: reads default.xbe's header in the chosen folder or disc image (the XDVDFS root directory) and starts
+  IndyET.exe or IndyET_EU.exe; the Home page says Xbox (USA) or Xbox (Europe).
+- Checked (autopilot): boot, install, main menu, the USA saves in the save book, Ceylon from slot 1, widescreen,
+  mouse camera. The game's language follows the console's (English); the other four are on the disc.
+- Testing tools take `INDY_EXE=IndyET_EU` (tools/ap_start.ps1, winshot.ps1, sendinput.ps1).
+
 ## Launcher 1.0.0 (first public release): languages, updates, Advanced page (2026-11-10)
 
 - Sidebar: "Indiana Jones and the Emperor's Tomb PC Port by MertCNOZ" under the logo; a GitHub button (top right of

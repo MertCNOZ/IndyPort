@@ -35,3 +35,4 @@ settings.toml
 
 # python bytecode
 __pycache__/
+/assets_eu/

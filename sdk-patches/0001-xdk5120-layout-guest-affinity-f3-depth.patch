@@ -1,5 +1,5 @@
 diff --git a/runtime/app/app.h b/runtime/app/app.h
-index 229e2fa..3f345b2 100644
+index 229e2fa..2b0e409 100644
 --- a/runtime/app/app.h
 +++ b/runtime/app/app.h
 @@ -22,11 +22,21 @@ struct Settings {
@@ -43,6 +43,16 @@ index 229e2fa..3f345b2 100644
  struct GameFiles {
      std::filesystem::path dir;
      std::vector<uint8_t> xbe;
+@@ -100,6 +115,9 @@ struct GameInfo {
+     void (*rumble)(int port, uint16_t& left, uint16_t& right);
+     // xbe file name, SHA-1: other releases the executable runs, each from its own [xbe] named config
+     std::vector<std::pair<const char*, const char*>> releases;
++    // the hard disk's Z: folder (the title's cache, where a game installs data from its disc), "Z" when null: a
++    // release whose installed data differs keeps its own, while the saves on E: stay shared
++    const char* cache = nullptr;
+ };
+ extern const GameInfo kGame;
+ 
 diff --git a/runtime/app/game_files.cpp b/runtime/app/game_files.cpp
 index a7ddee4..7cfb465 100644
 --- a/runtime/app/game_files.cpp
@@ -1552,10 +1562,41 @@ index 0000000..fd6c418
 +bool Make(const texturedumper::Image& in, texturedumper::Image& out);
 +
 +}  // namespace gpu::ui_upscale
+diff --git a/runtime/kernel/boot.cpp b/runtime/kernel/boot.cpp
+index 5cfc290..11a439a 100644
+--- a/runtime/kernel/boot.cpp
++++ b/runtime/kernel/boot.cpp
+@@ -132,7 +132,7 @@ bool Boot(std::vector<uint8_t> xbe, const std::string& xbe_name, const std::stri
+     }
+     LOGI("boot: kernel imports resolved, %u missing", missing);
+ 
+-    MountDefaults(game_dir, data_dir);
++    MountDefaults(game_dir, data_dir, app::kGame.cache);
+ 
+     // a quick reboot into this title left its launch data page behind
+     g_launch_file = data_dir + "/launch.bin";
 diff --git a/runtime/kernel/files.cpp b/runtime/kernel/files.cpp
-index f44b26d..173f41b 100644
+index f44b26d..24c9783 100644
 --- a/runtime/kernel/files.cpp
 +++ b/runtime/kernel/files.cpp
+@@ -190,7 +190,7 @@ std::string ReadCString(uint32_t va, size_t max) {
+     return s;
+ }
+ 
+-void MountDefaults(const std::string& game_dir, const std::string& data_dir) {
++void MountDefaults(const std::string& game_dir, const std::string& data_dir, const char* cache) {
+     std::lock_guard<std::mutex> lock(g_links_lock);
+     fs::path d = data_dir;
+     g_devices[kCdRom] = game_dir;
+@@ -198,7 +198,7 @@ void MountDefaults(const std::string& game_dir, const std::string& data_dir) {
+     g_devices["\\DEVICE\\HARDDISK0\\PARTITION2"] = d / "C";
+     g_devices["\\DEVICE\\HARDDISK0\\PARTITION3"] = d / "X";
+     g_devices["\\DEVICE\\HARDDISK0\\PARTITION4"] = d / "Y";
+-    g_devices["\\DEVICE\\HARDDISK0\\PARTITION5"] = d / "Z";
++    g_devices["\\DEVICE\\HARDDISK0\\PARTITION5"] = d / (cache ? cache : "Z");
+     for (auto& [k, v] : g_devices) {
+         std::error_code ec;
+         fs::create_directories(v, ec);
 @@ -577,10 +577,23 @@ KERNEL_EXPORT(226, NtSetInformationFile, 5) {
              std::string target = ReadAnsiString(in + 8);
              std::string host = ResolvePath(target, root);
@@ -1583,7 +1624,7 @@ index f44b26d..173f41b 100644
          }
          case 4:  // basic, times and attributes are not kept
 diff --git a/runtime/kernel/kernel.h b/runtime/kernel/kernel.h
-index 163ea09..95751a7 100644
+index 163ea09..87cc885 100644
 --- a/runtime/kernel/kernel.h
 +++ b/runtime/kernel/kernel.h
 @@ -154,6 +154,8 @@ struct Thread : Object {
@@ -1606,6 +1647,15 @@ index 163ea09..95751a7 100644
  void RunDpcs(X86Context& ctx);
  void InitKernelData();
  void LogGuestStack(X86Context& ctx, int words);
+@@ -182,7 +188,7 @@ void QueueApc(Thread& t, uint32_t routine, uint32_t a1, uint32_t a2, uint32_t a3
+ std::vector<ThreadRef> Threads();
+ 
+ // files
+-void MountDefaults(const std::string& game_dir, const std::string& data_dir);
++void MountDefaults(const std::string& game_dir, const std::string& data_dir, const char* cache = nullptr);
+ bool CreateSymbolicLink(const std::string& link, const std::string& target);
+ bool DeleteSymbolicLink(const std::string& link);
+ std::string QuerySymbolicLink(const std::string& link);
 @@ -211,6 +217,11 @@ const std::string& KeptPicture();
  // event and the old instance, waiting in Relaunch with its window still up, exits.
  std::wstring HandoverEvent(unsigned long process);

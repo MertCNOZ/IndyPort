@@ -24,13 +24,14 @@
 #include "app/app.h"
 #include "core/log.h"
 #include "kernel/kernel.h"
+#include "game/addresses.h"
 
 namespace game {
 
 namespace {
-constexpr uint32_t kSettingsPtr = 0x6B93A8;  // the game's settings object (0x9C6C3 stores it)
+constexpr uint32_t kSettingsPtr = kGameSettingsPtr;  // the game's settings object (USA: 0x9C6C3 stores it)
 constexpr uint32_t kFpsLimit = 0x8C;         // its "fpsLimit" (registered at 0x9EF26)
-constexpr uint32_t kDevicePtr = 0x4A9668;    // D3D_pDevice
+constexpr uint32_t kDevicePtr = kD3DDevicePtr;  // D3D_pDevice
 constexpr uint32_t kSwapCount = 0x2010;      // CDevice_SwapCount
 constexpr uint32_t kVBlankCount = 0x1980;    // CDevice_VBlankCount
 

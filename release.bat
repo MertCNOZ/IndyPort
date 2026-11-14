@@ -8,6 +8,8 @@ for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -property in
 for /d %%v in ("%VSDIR%\VC\Redist\MSVC\1*") do for /d %%c in ("%%v\x64\Microsoft.VC*.CRT") do set "VCRUNTIME=%%c"
 if not exist "%VCRUNTIME%\vcruntime140.dll" (echo Visual C++ runtime not found: install Visual Studio with the C++ workload & exit /b 1)
 if not exist "%OUT%\%GAME_EXE%.exe" call build.bat || exit /b 1
+rem the Europe (PAL) release's exe is built when its default.xbe is in assets_eu (PORT_NOTES.md)
+if not exist "%OUT%\%GAME_EXE%_EU.exe" (echo %GAME_EXE%_EU.exe was not built: copy the Europe disc's default.xbe to assets_eu, see PORT_NOTES.md & exit /b 1)
 rem the configure step writes where the SDK is
 if not exist "%OUT%\sdk_dir.txt" cmake --preset release >nul || exit /b 1
 if not exist "%OUT%\sdk_dir.txt" echo %OUT%\sdk_dir.txt was not written, update the SDK. && exit /b 1
@@ -27,4 +29,4 @@ rem exe it starts
 del /q "%OUT%\compiler\*.dll" 2>nul
 for %%f in (msvcp140 vcruntime140) do copy /y "%VCRUNTIME%\%%f.dll" "%OUT%\compiler\" >nul
 rem the compiler folder without its work folder: no game code goes in the zip, the first start builds it
-"%SEVENZIP%" a "IndyPort.zip" ".\%OUT%\%GAME_EXE%.exe" ".\%OUT%\IndyPort.exe" ".\%OUT%\release\textures" ".\%OUT%\release\assets" ".\%OUT%\compiler" .\README.md "%SDK%\THIRD_PARTY.txt" "%VCRUNTIME%\msvcp140.dll" "%VCRUNTIME%\vcruntime140.dll" "%VCRUNTIME%\vcruntime140_1.dll" -xr!work
+"%SEVENZIP%" a "IndyPort.zip" ".\%OUT%\%GAME_EXE%.exe" ".\%OUT%\%GAME_EXE%_EU.exe" ".\%OUT%\IndyPort.exe" ".\%OUT%\release\textures" ".\%OUT%\release\assets" ".\%OUT%\compiler" .\README.md "%SDK%\THIRD_PARTY.txt" "%VCRUNTIME%\msvcp140.dll" "%VCRUNTIME%\vcruntime140.dll" "%VCRUNTIME%\vcruntime140_1.dll" -xr!work

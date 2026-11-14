@@ -1,6 +1,6 @@
 # IndyPort: Indiana Jones and the Emperor's Tomb on PC
 
-An unofficial native PC port of the original Xbox version of *Indiana Jones and the Emperor's Tomb* (USA), made by
+An unofficial native PC port of the original Xbox version of *Indiana Jones and the Emperor's Tomb* (USA or Europe), made by
 statically recompiling the game's code with [Xbox XBE Recomp](https://github.com/TGP482/XboxXBERecomp). It comes
 with **IndyPort**, a launcher for choosing your copy of the game and setting up graphics and controls.
 
@@ -12,7 +12,7 @@ PC port by [MertCNOZ](https://github.com/MertCNOZ).
 
 > [!NOTE]
 > No game files are included. The port runs from your own legally acquired copy of the game: a disc image (`.iso`)
-> or the extracted files of the Xbox (USA) release.
+> or the extracted files of the Xbox USA or Europe (PAL) release. The launcher tells them apart and starts the right one.
 
 ## Getting started
 

@@ -77,13 +77,21 @@ void Pad(int port, input::Pad& pad) {
 const app::GameInfo app::kGame = {
     .title = L"Indiana Jones and the Emperor's Tomb",  // window and splash
     .short_title = L"Emperor's Tomb",     // message boxes
+#ifdef INDY_EU
+    .name = L"IndyET_EU",                 // window classes, crash dumps, handover event
+#else
     .name = L"IndyET",                    // window classes, crash dumps, handover event
+#endif
     .log = "indyet",                      // log file prefix
     .settings = "settings.toml",          // settings file beside the exe
     .splash = L"splash",                  // optional splash.png or splash.bmp beside the exe
     .missing = L"The game was not found. Open IndyPort.exe and choose your disc image (.iso) or the folder of the "
                L"extracted game (with default.xbe), or put either in the assets folder beside the game.",
+#ifdef INDY_EU
+    .images = {{"default.xbe", "IndyET_EU"}},  // the Europe (PAL) release's exe
+#else
     .images = {{"default.xbe", "IndyET"}},  // each recompiled xbe and its exe, for title launches
+#endif
     .options = {{"show_fps", &game::g_show_fps, nullptr}, {"draw_distance", nullptr, &game::g_draw_distance},
                 {"rumble", nullptr, &game::g_rumble}},  // game settings kept in the settings file
     .load = game::Load,                   // reads more from the settings file's toml::table: pad_map
@@ -95,4 +103,7 @@ const app::GameInfo app::kGame = {
     .ui = game::FpsOverlay,               // ImGui drawing each frame: the frame counter
     .pad = game::Pad,                     // changes a polled pad: keyboard and autopilot drive port 0
     .rumble = game::Rumble,                   // changes a rumble before it is set
+#ifdef INDY_EU
+    .cache = "Z_EU",  // the Europe release installs its own data (other files, five languages) to Z:
+#endif
 };

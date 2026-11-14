@@ -51,7 +51,12 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr const char* kVersion = "1.0.0";
+// the game's exe for each release of the disc: USA, and Europe (PAL), whose code is linked at other addresses
 constexpr const wchar_t* kGameExe = L"IndyET.exe";
+constexpr const wchar_t* kGameExeEurope = L"IndyET_EU.exe";
+enum class GameRelease { Unknown, Usa, Europe };
+// the releases' entry points (the xbe header's, retail key), which tell them apart
+constexpr uint32_t kEntryUsa = 0x47DE05, kEntryEurope = 0x47E365;
 constexpr const char* kTitleId = "4c410007";
 
 // colours: dark leather and the gold of the title
@@ -141,6 +146,78 @@ bool IsIso(const fs::path& p) {
 
 // an Xbox disc image: the XDVDFS volume descriptor ("MICROSOFT*XBOX*MEDIA" in sector 32) at the start of a game
 // partition (xiso), or behind the video partition of a whole disc dump (XGD1, XGD2, XGD3)
+bool IsXboxImage(const fs::path& p);
+
+GameRelease ReleaseOfHeader(const uint8_t* h, size_t n) {
+    if (n < 0x130 || std::memcmp(h, "XBEH", 4) != 0) return GameRelease::Unknown;
+    uint32_t enc;
+    std::memcpy(&enc, h + 0x128, 4);
+    uint32_t entry = enc ^ 0xA8FC57ABu;  // the retail key
+    return entry == kEntryUsa ? GameRelease::Usa : entry == kEntryEurope ? GameRelease::Europe : GameRelease::Unknown;
+}
+
+// the release of an extracted game: its default.xbe's header
+GameRelease ReleaseOfFolder(const fs::path& dir) {
+    uint8_t h[0x200] = {};
+    FILE* f = _wfopen((dir / "default.xbe").c_str(), L"rb");
+    if (!f) return GameRelease::Unknown;
+    size_t n = std::fread(h, 1, sizeof(h), f);
+    std::fclose(f);
+    return ReleaseOfHeader(h, n);
+}
+
+// the release of a disc image: default.xbe found in the root directory of its XDVDFS volume (a binary tree of
+// entries: left, right in 4 byte units, sector, size, attributes, name length, name)
+GameRelease ReleaseOfIso(const fs::path& p) {
+    FILE* f = _wfopen(p.c_str(), L"rb");
+    if (!f) return GameRelease::Unknown;
+    const int64_t partitions[] = {0, 0x18300000, 0xFD90000, 0x2080000};
+    GameRelease r = GameRelease::Unknown;
+    for (int64_t at : partitions) {
+        uint8_t vd[28] = {};
+        if (_fseeki64(f, at + 0x10000, SEEK_SET) != 0 || std::fread(vd, 1, sizeof(vd), f) != sizeof(vd) ||
+            std::memcmp(vd, "MICROSOFT*XBOX*MEDIA", 20) != 0)
+            continue;
+        uint32_t root_sector, root_size;
+        std::memcpy(&root_sector, vd + 20, 4);
+        std::memcpy(&root_size, vd + 24, 4);
+        if (root_size == 0 || root_size > (1u << 20)) break;
+        std::vector<uint8_t> table(root_size);
+        if (_fseeki64(f, at + int64_t(root_sector) * 2048, SEEK_SET) != 0 ||
+            std::fread(table.data(), 1, table.size(), f) != table.size())
+            break;
+        std::vector<size_t> stack{0};
+        std::vector<bool> seen(table.size() / 4 + 1);
+        while (!stack.empty()) {
+            size_t pos = stack.back();
+            stack.pop_back();
+            if (pos + 14 > table.size() || seen[pos / 4]) continue;
+            seen[pos / 4] = true;
+            uint16_t left, right;
+            uint32_t sector, size;
+            std::memcpy(&left, &table[pos], 2);
+            std::memcpy(&right, &table[pos + 2], 2);
+            std::memcpy(&sector, &table[pos + 4], 4);
+            std::memcpy(&size, &table[pos + 8], 4);
+            uint8_t len = table[pos + 13];
+            if (left == 0xFFFF || pos + 14 + len > table.size()) continue;
+            std::string name(reinterpret_cast<const char*>(&table[pos + 14]), len);
+            if (_stricmp(name.c_str(), "default.xbe") == 0) {
+                uint8_t h[0x200] = {};
+                size_t n = 0;
+                if (_fseeki64(f, at + int64_t(sector) * 2048, SEEK_SET) == 0) n = std::fread(h, 1, sizeof(h), f);
+                r = ReleaseOfHeader(h, n);
+                break;
+            }
+            if (left) stack.push_back(size_t(left) * 4);
+            if (right) stack.push_back(size_t(right) * 4);
+        }
+        break;
+    }
+    std::fclose(f);
+    return r;
+}
+
 bool IsXboxImage(const fs::path& p) {
     FILE* f = _wfopen(p.c_str(), L"rb");
     if (!f) return false;
@@ -163,7 +240,11 @@ struct GameFiles {
     std::string what;    // "Disc image: name.iso", "Extracted files", or what is wrong
     std::string where;   // the folder or file, for the page
     bool chosen = false; // from game_path, not the assets folder
+    GameRelease release = GameRelease::Unknown;
 };
+
+// the exe that runs this release of the game
+const wchar_t* GameExeFor(GameRelease r) { return r == GameRelease::Europe ? kGameExeEurope : kGameExe; }
 
 GameFiles CheckFolder(const fs::path& dir) {
     GameFiles g;
@@ -172,6 +253,7 @@ GameFiles CheckFolder(const fs::path& dir) {
     if (fs::exists(dir / "default.xbe", ec)) {
         g.state = GameFiles::Ready;
         g.what = T("Extracted game files");
+        g.release = ReleaseOfFolder(dir);
         return g;
     }
     std::vector<fs::path> isos;
@@ -182,6 +264,7 @@ GameFiles CheckFolder(const fs::path& dir) {
         if (IsXboxImage(iso)) {
             g.state = GameFiles::Ready;
             g.what = T("Disc image: ") + Utf8(iso.filename().wstring());
+            g.release = ReleaseOfIso(iso);
             return g;
         }
     g.state = GameFiles::Problem;
@@ -202,12 +285,17 @@ GameFiles CheckGame(const std::string& game_path) {
             bool ok = IsXboxImage(p);
             g.state = ok ? GameFiles::Ready : GameFiles::Problem;
             g.what = ok ? T("Disc image: ") + Utf8(p.filename().wstring()) : std::string(T("This file is not an Xbox disc image."));
+            if (ok) g.release = ReleaseOfIso(p);
         } else {
             g.where = game_path;
             g.state = GameFiles::Problem;
             g.what = T("Not found. Was it moved, or is the drive unplugged?");
         }
         g.chosen = true;
+        if (g.state == GameFiles::Ready && g.release == GameRelease::Europe && !fs::exists(ExeDir() / kGameExeEurope)) {
+            g.state = GameFiles::Problem;
+            g.what = T("This is the Europe (PAL) release; this copy of the port has no IndyET_EU.exe for it.");
+        }
         return g;
     }
     if (fs::path a = FindAssets(); !a.empty()) {
@@ -505,7 +593,7 @@ bool GameAlreadyRunning() {
     PROCESSENTRY32W e{sizeof(e)};
     bool found = false;
     for (BOOL ok = Process32FirstW(snap, &e); ok && !found; ok = Process32NextW(snap, &e))
-        found = _wcsicmp(e.szExeFile, kGameExe) == 0;
+        found = _wcsicmp(e.szExeFile, kGameExe) == 0 || _wcsicmp(e.szExeFile, kGameExeEurope) == 0;
     CloseHandle(snap);
     return found;
 }
@@ -513,7 +601,7 @@ bool GameAlreadyRunning() {
 // The game runs in a job: it restarts itself as a new process when it launches an Xbox image (the old one exits once
 // the new one shows its first frames), and the game code compiler runs as child processes. The game has ended only
 // when the job has no process left.
-void Play(HWND window, bool close_launcher) {
+void Play(HWND window, bool close_launcher, GameRelease release) {
     if (g_game_running || GameAlreadyRunning()) {
         Log("play: the game is already running");
         return;
@@ -525,7 +613,7 @@ void Play(HWND window, bool close_launcher) {
 
     STARTUPINFOW si{sizeof(si)};
     PROCESS_INFORMATION pi{};
-    fs::path exe = ExeDir() / kGameExe;
+    fs::path exe = ExeDir() / GameExeFor(release);
     std::wstring cmd = L"\"" + exe.wstring() + L"\"";
     if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED, nullptr, ExeDir().c_str(),
                         &si, &pi)) {
@@ -929,7 +1017,7 @@ void PageGame(Ui& ui) {
     }
     ImGui::EndDisabled();
     Desc(nullptr);
-    Desc("Indiana Jones and the Emperor's Tomb for the original Xbox (USA), from your own disc: a disc image (.iso; a "
+    Desc("Indiana Jones and the Emperor's Tomb for the original Xbox (USA or Europe), from your own disc: a disc image (.iso; a "
          "whole disc dump or an xiso), or the extracted files (the folder with default.xbe). The port reads it where "
          "it is; nothing is copied and nothing is changed.");
     if (ui.game.chosen) {
@@ -1412,7 +1500,9 @@ void PageHome(Ui& ui, float banner_h) {
 
     ImGui::PushFont(g_font_head);
     ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
-    ImGui::TextUnformatted("Indiana Jones and the Emperor's Tomb  \xc2\xb7  Xbox (USA)");
+    ImGui::TextUnformatted(ui.game.release == GameRelease::Europe
+                               ? "Indiana Jones and the Emperor's Tomb  \xc2\xb7  Xbox (Europe)"
+                               : "Indiana Jones and the Emperor's Tomb  \xc2\xb7  Xbox (USA)");
     ImGui::PopStyleColor();
     ImGui::PopFont();
     ImU32 colour = ui.game.state == GameFiles::Ready ? kDim : kBad;
@@ -1609,7 +1699,7 @@ void BottomBar(Ui& ui, float x, float y, float w, float h, bool focus_play) {
     ImGui::PushFont(ready ? g_font_play : g_font_nav);
     if (focus_play) ImGui::SetKeyboardFocusHere();
     if (ImGui::Button(label, ImVec2(bw, bh)) && !g_game_running) {
-        if (ready) Play(ui.window, ui.s.close_on_play);
+        if (ready) Play(ui.window, ui.s.close_on_play, ui.game.release);
         else ui.page = Page::Game;
     }
     ImGui::PopFont();
@@ -1775,7 +1865,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             ui.page = Page::Home;
         if (front && !popup && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) &&
             ui.game.state == GameFiles::Ready)
-            Play(ui.window, ui.s.close_on_play);
+            Play(ui.window, ui.s.close_on_play, ui.game.release);
         if (ImGui::GetTime() > checked + 2) {
             ui.saves = ListSaves();
             ui.game = CheckGame(ui.s.game_path);

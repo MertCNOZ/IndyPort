@@ -27,7 +27,7 @@ endif()
 include(${SDK}/cmake/XbeRecomp.cmake)
 
 file(GLOB XBE_HOST_SOURCES CONFIGURE_DEPENDS src/*/*.cpp)
-list(FILTER XBE_HOST_SOURCES EXCLUDE REGEX "/src/game/")
+list(FILTER XBE_HOST_SOURCES EXCLUDE REGEX "/src/game(_eu)?/")
 
 # partitions as xbe_symbols wrote them into config/game.toml
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS config/game.toml)
@@ -42,6 +42,13 @@ endif()
 
 # target name = GAME_EXE in build.bat, xbe = GAME_XBE
 add_xbe_image(IndyET default.xbe game.toml ${GAME_PARTITIONS} game)
+
+# the Europe (PAL) release, when its xbe is in assets_eu (tools/xiso_file.py copies it out of the disc image): its own
+# exe, IndyET_EU, with the same port at the release's addresses (src/game/addresses.h, INDY_EU)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/assets_eu/default.xbe AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/config/game_eu.toml)
+    add_xbe_image(IndyET_EU ../assets_eu/default.xbe game_eu.toml ${GAME_PARTITIONS} game_eu)
+    target_compile_definitions(IndyET_EU PRIVATE INDY_EU=1)
+endif()
 
 # the built-in texture packs (our own images, no game art) beside the game: textures\packs\<name>
 add_custom_target(texture_packs ALL

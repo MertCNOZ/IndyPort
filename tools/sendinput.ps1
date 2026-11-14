@@ -2,7 +2,7 @@
 # mouse with SendInput (what GetAsyncKeyState and raw input see; posted messages do not reach them).
 # Usage: powershell -ExecutionPolicy Bypass -File tools\sendinput.ps1 -Name IndyET [-Key 0x57] [-HoldMs 1000]
 #        [-MouseDx 0] [-MouseDy 0] [-Steps 50] [-Click left|right]
-param([string]$Name = "IndyET", [string]$Key = "", [int]$HoldMs = 500, [int]$MouseDx = 0, [int]$MouseDy = 0,
+param([string]$Name = $(if ($env:INDY_EXE) { $env:INDY_EXE } else { "IndyET" }), [string]$Key = "", [int]$HoldMs = 500, [int]$MouseDx = 0, [int]$MouseDy = 0,
       [int]$Steps = 50, [string]$Click = "")
 Add-Type -TypeDefinition @"
 using System;
