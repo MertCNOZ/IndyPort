@@ -1,8 +1,8 @@
 # IndyPort: Indiana Jones and the Emperor's Tomb on PC
 
-An unofficial native PC port of the original Xbox version of *Indiana Jones and the Emperor's Tomb* (USA or Europe), made by
-statically recompiling the game's code with [Xbox XBE Recomp](https://github.com/TGP482/XboxXBERecomp). It comes
-with **IndyPort**, a launcher for choosing your copy of the game and setting up graphics and controls.
+An unofficial native PC port of the original Xbox version of *Indiana Jones and the Emperor's Tomb* (USA and
+Europe), made by statically recompiling the game's code with [Xbox XBE Recomp](https://github.com/TGP482/XboxXBERecomp).
+It comes with **IndyPort**, a launcher for choosing your copy of the game and setting up graphics and controls.
 
 PC port by [MertCNOZ](https://github.com/MertCNOZ).
 
@@ -12,7 +12,7 @@ PC port by [MertCNOZ](https://github.com/MertCNOZ).
 
 > [!NOTE]
 > No game files are included. The port runs from your own legally acquired copy of the game: a disc image (`.iso`)
-> or the extracted files of the Xbox USA or Europe (PAL) release. The launcher tells them apart and starts the right one.
+> or the extracted files of the Xbox USA or Europe (PAL) release.
 
 ## Getting started
 
@@ -23,6 +23,17 @@ PC port by [MertCNOZ](https://github.com/MertCNOZ).
 4. Press **Play**. The first start compiles the game's code for your PC; this only happens once.
 
 Without a choice in IndyPort, the port also finds the game in an `assets` folder beside it.
+
+## USA and Europe releases
+
+Both Xbox releases run: the USA disc and the Europe (PAL) disc, *Indiana Jones and the Emperor's Tomb (Europe)
+(En,Fr,De,Es,It)*. IndyPort reads which one you chose and starts the right port for it; the Home page names it.
+
+- **Five languages** on the Europe release: English, French, German, Spanish or Italian, chosen on the Game page.
+  The first start in a language installs its files from the disc, which takes about a minute.
+- **Saves are shared**: both releases use the same saves, so a game saved on one continues on the other.
+- The modern Xbox and keyboard and mouse button icons cover both releases, including the Europe release's French,
+  Italian and Spanish trigger and stick icons.
 
 ## Features
 
@@ -43,6 +54,7 @@ Without a choice in IndyPort, the port also finds the game in an `assets` folder
   click away.
 - **Sharpening** (contrast adaptive) and up to 16x anisotropic filtering for the game's low resolution textures.
 - **Draw distance** up to 400% of each level's own.
+- **Fill seams**: fills hairline cracks between surfaces that can show as pale dots at high resolutions.
 - **Sharper movies**: the game's 640 x 480 videos are scaled with a sharper filter.
 - Texture packs: images in `textures\replacement` replace the game's textures; the game's textures can be dumped
   to make them.
@@ -62,6 +74,9 @@ Without a choice in IndyPort, the port also finds the game in an `assets` folder
 - Saves live on the port's Xbox hard disk (`hdd\E\UDATA` beside the exe). IndyPort lists them and backs them up.
 
 ### Launcher
+- A Home page with the game's name, Play and shortcuts over a slowly drifting jungle temple painting; the pages as
+  tabs across the top; buttons that glow under the mouse. The motion follows Windows' animation effects setting.
+- Mouse, keyboard or controller (LB / RB change pages, Start plays).
 - English, Turkish and Russian (follows Windows, or chosen on the Advanced page).
 - **Updates**: IndyPort looks for a new release on GitHub when it starts (this can be turned off) and installs it
   with one click. Only the port's own files are replaced: saves, settings, texture packs and your game files stay.
@@ -82,8 +97,10 @@ Without a choice in IndyPort, the port also finds the game in an `assets` folder
 2. Put your extracted game files in the `assets` folder: `default.xbe` with the game's folders beside it.
 3. Install Visual Studio 2022 with **Desktop development with C++**, **C++ Clang tools for Windows** and
    **C++ CMake tools for Windows** (`build.bat` offers to add the last two).
-4. Run `build.bat`. The first build recompiles the game and takes a while. `IndyET.exe` and `IndyPort.exe` are
-   written to `out\build\release`; `release.bat` makes the zip.
+4. For the Europe release's exe as well, copy its `default.xbe` to `assets_eu`
+   (`python tools\xiso_file.py <europe.iso> default.xbe assets_eu\default.xbe`).
+5. Run `build.bat`. The first build recompiles the game and takes a while. `IndyET.exe`, `IndyET_EU.exe` (Europe)
+   and `IndyPort.exe` are written to `out\build\release`; `release.bat` makes the zip.
 
 ## Credits
 
