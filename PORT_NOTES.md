@@ -478,6 +478,21 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   over Z:, so each language past English has its own folder: hdd/Z_EU_fr, _de, _es, _it. Checked: French menus and
   hints after a first start's install.
 
+## Launcher look, 1.1.0 (2026-11-14)
+
+- From a design the user made on launcher 1.0.0 (its source), with the port's changes since 1.0.0 (Europe release,
+  game language, Fill seams) applied onto it. The pages are tabs in the launcher's own title bar with the window's
+  buttons (WM_NCCALCSIZE takes away the system one, WM_NCHITTEST makes the bar a drag area left of the tabs, the
+  edges resize). Home is the jungle temple painting across the page with the game's name, Play, the game found and
+  cards to the Game, Saves and Advanced pages; the other pages keep the bar along the bottom with Play.
+- Motion: buttons (PaintedButton) ease into a hover glow and lift and sink when pressed, the painting drifts slowly
+  with lit dust over it, each page fades in; Windows' "animation effects" setting turns all of it off.
+- Fixed in the design: the glow was drawn as overlapping outlines and showed as stripes around Play (now faint
+  filled layers that fall off evenly); the gradient skipped the page's fade; the bottom bar's Play was narrower
+  than the room the bar left for it; Play started the USA exe for a Europe disc. Home names the release found.
+- The design had the game's official character art over the painting; it was left out, as the port ships no
+  game assets. Quick settings left Home; they are all on Graphics.
+
 ## Launcher 1.0.0 (first public release): languages, updates, Advanced page (2026-11-10)
 
 - Sidebar: "Indiana Jones and the Emperor's Tomb PC Port by MertCNOZ" under the logo; a GitHub button (top right of

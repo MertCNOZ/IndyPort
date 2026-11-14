@@ -3,12 +3,13 @@
 // Dear ImGui on Win32 and Direct3D 11 (SDL3 only for controller names and display modes), mouse, keyboard or
 // controller. No game files are part of it.
 //
-// A sidebar with the pages (Home, Graphics, Game, Controls, Saves, About) and a bar along the bottom with Play.
+// Home has the main action and shortcuts. The top navigation opens the settings and maintenance pages.
 // It lives beside IndyET.exe; settings.toml (with game_path, the copy chosen here) and the hdd folder (saves) are
 // beside the exe. Without a chosen copy the port looks in an "assets" folder beside it or in any folder above.
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <windowsx.h>
 #include <commdlg.h>
 #include <d3d11.h>
 #include <shellapi.h>
@@ -36,6 +37,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -50,7 +52,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr const char* kVersion = "1.0.0";
+constexpr const char* kVersion = "1.1.0";
 // the game's exe for each release of the disc: USA, and Europe (PAL), whose code is linked at other addresses
 constexpr const wchar_t* kGameExe = L"IndyET.exe";
 constexpr const wchar_t* kGameExeEurope = L"IndyET_EU.exe";
@@ -61,14 +63,12 @@ constexpr const char* kTitleId = "4c410007";
 
 // colours: dark leather and the gold of the title
 constexpr ImU32 kBg = IM_COL32(20, 17, 15, 255);
-constexpr ImU32 kSidebar = IM_COL32(13, 11, 10, 255);
-constexpr ImU32 kSelRow = IM_COL32(32, 26, 22, 255);
 constexpr ImU32 kBar = IM_COL32(15, 13, 11, 255);
 constexpr ImU32 kLine = IM_COL32(52, 44, 38, 255);
 constexpr ImU32 kText = IM_COL32(236, 230, 222, 255);
 constexpr ImU32 kDim = IM_COL32(150, 140, 128, 255);
 constexpr ImU32 kAccent = IM_COL32(236, 160, 44, 255);
-constexpr ImU32 kPlay = IM_COL32(176, 88, 20, 255);
+constexpr ImU32 kPlay = IM_COL32(236, 147, 61, 255);
 constexpr ImU32 kGood = IM_COL32(130, 200, 110, 255);
 constexpr ImU32 kBad = IM_COL32(236, 110, 90, 255);
 
@@ -77,7 +77,7 @@ ImFont* g_font = nullptr;        // text
 ImFont* g_font_head = nullptr;   // section headings
 ImFont* g_font_nav = nullptr;    // sidebar pages
 ImFont* g_font_title = nullptr;  // page titles
-ImFont* g_font_logo = nullptr;
+ImFont* g_font_hero = nullptr;
 ImFont* g_font_play = nullptr;
 
 // ---- paths
@@ -665,6 +665,7 @@ ID3D11DeviceContext* g_ctx = nullptr;
 IDXGISwapChain* g_swap = nullptr;
 ID3D11RenderTargetView* g_rtv = nullptr;
 UINT g_resize_w = 0, g_resize_h = 0;
+RECT g_caption{};
 
 struct Image {
     ID3D11ShaderResourceView* srv = nullptr;
@@ -785,9 +786,7 @@ bool Slider(const char* id, int* v, int lo, int hi, int step, const char* fmt, f
     return changed;
 }
 
-bool Button(const char* label, float width = 0) {
-    return ImGui::Button(T(label), ImVec2(width, ImGui::GetFrameHeight()));
-}
+bool Button(const char* label, float width = 0);
 
 void Heading(const char* text) {
     ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.5f));
@@ -1317,30 +1316,158 @@ void PageAbout(Ui&) {
     ImGui::TextUnformatted(kVersion);
 }
 
-// the banner across the top of Home: the key art filling the width, faded into the page at the bottom and the left
-void Banner(float w, float h) {
-    ImVec2 p = ImGui::GetCursorScreenPos();
-    ImDrawList* d = ImGui::GetWindowDrawList();
-    if (g_banner.srv) {
-        float ia = float(g_banner.w) / float(g_banner.h), ba = w / h;
-        ImVec2 uv0(0, 0), uv1(1, 1);
-        if (ba > ia) {  // cut the top and bottom, keeping the hat's brim and the title
-            float vh = ia / ba;
-            uv0.y = 0.22f * (1 - vh);
-            uv1.y = uv0.y + vh;
-        } else {
-            float uw = ba / ia;
-            uv0.x = 0.3f * (1 - uw);
-            uv1.x = uv0.x + uw;
-        }
-        d->AddImage(ImTextureID(g_banner.srv), p, ImVec2(p.x + w, p.y + h), uv0, uv1);
-    } else {
-        d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), IM_COL32(60, 36, 16, 255));
+// Respect Windows' animation preference at startup and when it changes.
+bool g_motion = true;
+
+void RefreshMotionPreference() {
+    BOOL enabled = TRUE;
+    SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0);
+    g_motion = enabled != FALSE;
+}
+
+float EaseOut(float t) {
+    t = 1.0f - std::clamp(t, 0.0f, 1.0f);
+    return 1.0f - t * t * t;
+}
+
+float Follow(float value, float target) {
+    if (!g_motion) return target;
+    return target + (value - target) * std::exp(-14.0f * ImGui::GetIO().DeltaTime);
+}
+
+ImU32 Blend(ImU32 a, ImU32 b, float t) {
+    return ImGui::ColorConvertFloat4ToU32(ImLerp(ImGui::ColorConvertU32ToFloat4(a),
+                                               ImGui::ColorConvertU32ToFloat4(b), t));
+}
+
+// Draw a soft halo: faint filled layers, each a little larger, so the light falls off evenly away from the button.
+// (Outlines overlapped one another and showed as stripes around Play.) Keep the button hit box stationary during
+// the lift.
+void Glow(ImDrawList* draw, ImVec2 min, ImVec2 max, float radius, float spread, float strength) {
+    constexpr int kLayers = 16;
+    const ImU32 layer = ImGui::GetColorU32(ImVec4(1.0f, 0.56f, 0.23f, strength * 2.2f / kLayers));
+    for (int i = kLayers; i >= 1; --i) {
+        const float distance = spread * i / kLayers;
+        draw->AddRectFilled(ImVec2(min.x - distance, min.y - distance), ImVec2(max.x + distance, max.y + distance),
+                            layer, radius + distance);
     }
-    ImU32 clear = kBg & 0x00FFFFFF;
-    d->AddRectFilledMultiColor(ImVec2(p.x, p.y + h * 0.55f), ImVec2(p.x + w, p.y + h), clear, clear, kBg, kBg);
-    d->AddRectFilledMultiColor(p, ImVec2(p.x + w * 0.06f, p.y + h), kBg, clear, clear, kBg);
-    ImGui::Dummy(ImVec2(w, h));
+}
+
+enum class ButtonLook { Primary, Secondary, Tab, Card };
+
+bool PaintedButton(const char* label, ImVec2 size, ButtonLook look,
+                   const char* detail = nullptr, bool selected = false) {
+    const ImGuiID id = ImGui::GetID(label);
+    const float unit = ImGui::GetFontSize() / 18.0f;
+    const float radius = (look == ButtonLook::Card ? 13.0f : 9.0f) * unit;
+    ImGui::PushStyleColor(ImGuiCol_Button, ImU32(0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImU32(0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImU32(0));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImU32(0));
+    ImGui::PushStyleColor(ImGuiCol_NavHighlight, ImU32(0));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0);
+    const bool clicked = ImGui::Button(label, size);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(5);
+    if (!ImGui::IsItemVisible()) return clicked;
+
+    ImGuiStorage* state = ImGui::GetStateStorage();
+    ImGui::PushID(label);
+    const ImGuiID press_id = ImGui::GetID("press");
+    ImGui::PopID();
+    const bool focused = ImGui::IsItemFocused() && !ImGui::GetCurrentContext()->NavDisableHighlight;
+    // ImGui can report navigation focus as hover. Only the pointer drives the glow.
+    const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_NoNavOverride);
+    const float hover = Follow(state->GetFloat(id), hovered ? 1.0f : 0.0f);
+    const float press = Follow(state->GetFloat(press_id), ImGui::IsItemActive() ? 1.0f : 0.0f);
+    state->SetFloat(id, hover);
+    state->SetFloat(press_id, press);
+
+    ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+    const float shrink = (max.y - min.y) * 0.035f * press;
+    const float lift = unit * (look == ButtonLook::Card ? 2 : 1) * (hover - press);
+    min.x += shrink;
+    max.x -= shrink;
+    min.y += shrink - lift;
+    max.y -= shrink + lift;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const bool primary = look == ButtonLook::Primary;
+    const auto color = [](ImU32 c) { return ImGui::GetColorU32(c); };
+    ImU32 ink = color(kText);
+    if (primary) {
+        if (hover > 0.01f)
+            Glow(draw, ImVec2(min.x, min.y + 4 * unit), ImVec2(max.x, max.y + 4 * unit),
+                 radius, 21 * unit, 0.23f * hover);
+        const int begin = draw->VtxBuffer.Size;
+        draw->AddRectFilled(min, max, color(IM_COL32_WHITE), radius);
+        ImGui::ShadeVertsLinearColorGradientKeepAlpha(draw, begin, draw->VtxBuffer.Size,
+            min, ImVec2(max.x, min.y), color(Blend(kPlay, IM_COL32(255, 193, 116, 255), hover)),
+            color(Blend(IM_COL32(255, 190, 108, 255), IM_COL32(255, 216, 158, 255), hover)));
+        draw->AddRect(min, max, color(IM_COL32(255, 237, 200, 130)), radius);
+        ink = color(IM_COL32(43, 23, 13, 255));
+    } else {
+        const bool tab = look == ButtonLook::Tab;
+        const ImU32 base = tab && !selected ? IM_COL32(79, 63, 57, 0) : IM_COL32(47, 37, 35, 220);
+        if (hover > 0.01f) Glow(draw, min, max, radius, 9 * unit, hover * 0.075f);
+        draw->AddRectFilled(min, max, color(Blend(base, IM_COL32(87, 61, 44, 240), hover * 0.7f)), radius);
+        if (!tab || selected) {
+            draw->AddRect(min, max, color(Blend(IM_COL32(238, 187, 147, 42),
+                                               IM_COL32(255, 183, 106, 140), hover)), radius);
+        }
+        if (tab && !selected) ink = color(Blend(kDim, kText, hover));
+    }
+    if (focused) draw->AddRect(ImVec2(min.x - 2 * unit, min.y - 2 * unit),
+                               ImVec2(max.x + 2 * unit, max.y + 2 * unit), color(kAccent), radius + 2 * unit);
+    const char* end = ImGui::FindRenderedTextEnd(label);
+    const ImVec2 text = ImGui::CalcTextSize(label, end);
+    if (look == ButtonLook::Card) {
+        const float x = min.x + 17 * unit;
+        draw->AddText(ImVec2(x, min.y + 10 * unit), ink, label, end);
+        draw->AddText(ImVec2(x, min.y + 35 * unit), color(kDim), detail);
+        draw->AddText(ImVec2(max.x - 23 * unit, min.y + 11 * unit), color(kAccent), "\xe2\x86\x92");
+    } else {
+        draw->AddText(ImVec2((min.x + max.x - text.x) * 0.5f, (min.y + max.y - text.y) * 0.5f), ink, label, end);
+    }
+    return clicked;
+}
+
+bool Button(const char* label, float width) {
+    return PaintedButton(T(label), ImVec2(width, ImGui::GetFrameHeight()), ButtonLook::Secondary);
+}
+
+// The existing IndyPort cover, with a slow camera drift and lit dust in the foreground.
+void Banner(float w, float h) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const ImVec2 end(p.x + w, p.y + h);
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    const float time = g_motion ? float(ImGui::GetTime()) : 0.0f;
+    d->PushClipRect(p, end, true);
+    if (g_banner.srv) {
+        const float ia = float(g_banner.w) / float(g_banner.h);
+        const float ba = w / h;
+        const float zoom = 1.08f + 0.04f * std::sin(time * 0.26f);
+        const float uw = std::min(1.0f, ba / ia) / zoom;
+        const float vh = std::min(1.0f, ia / ba) / zoom;
+        const ImVec2 uv((1 - uw) * (0.56f + 0.20f * std::sin(time * 0.17f)),
+                        (1 - vh) * 0.42f);
+        d->AddImage(ImTextureID(g_banner.srv), p, end, uv, ImVec2(uv.x + uw, uv.y + vh));
+    } else {
+        d->AddRectFilledMultiColor(p, end, IM_COL32(62, 41, 27, 255), IM_COL32(132, 81, 40, 255), kBg, kBg);
+    }
+    const ImU32 clear = kBg & 0x00FFFFFF;
+    const ImU32 shade = IM_COL32(20, 17, 15, 238);
+    d->AddRectFilledMultiColor(p, ImVec2(p.x + w * 0.76f, end.y), shade, clear, clear, shade);
+    for (int i = 0; i < 36; ++i) {
+        const float x = std::fmod(i * 0.618034f + time * (0.009f + 0.002f * (i % 5)), 1.0f);
+        const float y = std::fmod(i * 0.381966f + time * 0.006f, 0.88f);
+        const float edge = std::min({1.0f, x * 10, (1 - x) * 10, y * 12, (0.88f - y) * 12});
+        const int alpha = int(edge * (65 + 44 * std::sin(time * 0.8f + i)));
+        const ImVec2 at(p.x + x * w, p.y + (1 - y) * h);
+        d->AddCircleFilled(at, ImGui::GetFontSize() * (0.045f + 0.021f * (i % 3)),
+                           IM_COL32(255, 199, 114, alpha), 8);
+    }
+    d->AddRectFilledMultiColor(ImVec2(p.x, p.y + h * 0.37f), end, clear, clear, kBg, kBg);
+    d->PopClipRect();
 }
 
 // ---- updates (update.cpp), the GitHub button, the Advanced page
@@ -1469,7 +1596,7 @@ void PageAdvanced(Ui& ui) {
             ui.game = CheckGame(ui.s.game_path);  // its messages in the new language
         }
     }
-    Desc("The language of this launcher. The game itself stays in English.");
+    Desc("The language of this launcher. The USA release plays in English; the Europe release's language is on the Game page.");
     CheckLine("##closeplay", &ui.s.close_on_play, "Close the launcher when the game starts");
     Desc("Off keeps it minimized while you play and shows it again when the game ends.");
 
@@ -1505,66 +1632,77 @@ void PageAdvanced(Ui& ui) {
     }
 }
 
-void PageHome(Ui& ui, float banner_h) {
-    ImVec2 start = ImGui::GetCursorPos();
-    float pad = ImGui::GetFontSize() * 2;
-    ImGui::SetCursorPos(ImVec2(0, 0));
-    Banner(ImGui::GetWindowWidth(), banner_h);
-    GitHubButton(pad);
-    ImGui::SetCursorPos(ImVec2(start.x, banner_h - pad * 0.5f));
-
-    ImGui::PushFont(g_font_head);
-    ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
-    ImGui::TextUnformatted(ui.game.release == GameRelease::Europe
-                               ? "Indiana Jones and the Emperor's Tomb  \xc2\xb7  Xbox (Europe)"
-                               : "Indiana Jones and the Emperor's Tomb  \xc2\xb7  Xbox (USA)");
-    ImGui::PopStyleColor();
-    ImGui::PopFont();
-    ImU32 colour = ui.game.state == GameFiles::Ready ? kDim : kBad;
-    ImGui::PushStyleColor(ImGuiCol_Text, colour);
-    if (ui.game.state == GameFiles::Ready) ImGui::Text("%s", ui.game.what.c_str());
-    else ImGui::Text(T("%s Choose your copy of the game on the Game page."), ui.game.what.c_str());
-    UpdateNotice(ui);
-    ImGui::PopStyleColor();
-
-    Heading("QUICK SETTINGS");
-    float half = (ImGui::GetContentRegionAvail().x - ImGui::GetFontSize()) * 0.5f;
-    float label = ImGui::GetFontSize() * 9;
-    float cw = std::min(ControlWidth() * 0.85f, half - label - ImGui::GetFontSize());
-    float x0 = ImGui::GetCursorPosX(), x1 = x0 + half;
-    auto cell = [&](float x, const char* name) {
-        ImGui::SetCursorPosX(x);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(T(name));
-        ImGui::SameLine(x + label);
-    };
-    cell(x0, "Display mode");
-    DisplayModeControl(ui, cw);
-    ImGui::SameLine();
-    cell(x1, "Resolution");
-    ResolutionControl(ui, cw);
-    cell(x0, "Frame rate limit");
-    FpsControl(ui, cw);
-    ImGui::SameLine();
-    cell(x1, "Render scale");
-    ScaleControl(ui, cw);
-    cell(x0, "Aspect ratio");
-    AspectControl(ui, cw);
-    ImGui::SameLine();
-    cell(x1, "Draw distance");
-    {
-        const int values[] = {100, 150, 200, 300, 400};
-        std::vector<std::string> names = {"Original", "150%", "200%", "300%", "400%"};
-        int cur = 0;
-        for (int i = 0; i < 5; i++)
-            if (values[i] == ui.s.draw_distance) cur = i;
-        if (Combo("##ddq", &cur, names, cw)) ui.s.draw_distance = values[cur];
+void PlayButton(Ui& ui, bool focus, float width = 0) {
+    const bool ready = ui.game.state == GameFiles::Ready;
+    const bool running = g_game_running;
+    const char* label = T(running ? "RUNNING" : ready ? "PLAY" : "CHOOSE GAME");
+    const float unit = ImGui::GetFontSize() / 18.0f;
+    ImGui::PushFont(g_font_play);
+    if (focus) ImGui::SetKeyboardFocusHere();
+    const ImVec2 size(width > 0 ? width : std::max(232 * unit, ImGui::CalcTextSize(label).x + 52 * unit), 55 * unit);
+    if (PaintedButton(label, size, running ? ButtonLook::Secondary : ButtonLook::Primary) && !running) {
+        if (ready) Play(ui.window, ui.s.close_on_play, ui.game.release);
+        else ui.page = Page::Game;
     }
-    cell(x0, "FPS counter");
-    Check("##showfps", &ui.s.show_fps);
-    ImGui::SameLine();
-    cell(x1, "VSync");
-    Check("##vsync", &ui.s.vsync);
+    ImGui::PopFont();
+}
+
+void PageHome(Ui& ui, float height, double opened, bool focus) {
+    const float width = ImGui::GetWindowWidth();
+    const float unit = ImGui::GetFontSize() / 18.0f;
+    const float left = std::max(48 * unit, width * 0.071f);
+    const float top = std::max(42 * unit, height * 0.17f);
+    Banner(width, height);
+    GitHubButton(24 * unit);
+
+    auto reveal = [&](float delay) {
+        const float t = g_motion ? EaseOut((float(ImGui::GetTime() - opened) - delay) / 0.34f) : 1.0f;
+        ImGui::SetCursorPosX(left);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (1 - t) * 4 * unit);
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.68f + 0.32f * t);
+    };
+    ImGui::SetCursorPosY(top);
+    reveal(0);
+    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kAccent), "I N D I A N A   J O N E S");
+    ImGui::PopStyleVar();
+
+    reveal(0.035f);
+    ImGui::PushFont(g_font_hero);
+    ImGui::TextUnformatted("Emperor's Tomb");
+    ImGui::PopFont();
+    ImGui::PopStyleVar();
+
+    reveal(0.07f);
+    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kDim), "PC Port by MertCNOZ  \xc2\xb7  v%s%s", kVersion,
+                       ui.game.state != GameFiles::Ready          ? ""
+                       : ui.game.release == GameRelease::Europe ? "  \xc2\xb7  Xbox (Europe)"
+                                                                : "  \xc2\xb7  Xbox (USA)");
+    ImGui::PopStyleVar();
+    ImGui::Dummy(ImVec2(0, 11 * unit));
+
+    reveal(0.11f);
+    PlayButton(ui, focus);
+    ImGui::PopStyleVar();
+
+    reveal(0.14f);
+    ImGui::PushTextWrapPos(std::min(width - left, left + 530 * unit));
+    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ui.game.state == GameFiles::Ready ? kDim : kBad),
+                       "%s", ui.game.what.c_str());
+    ImGui::PopTextWrapPos();
+    UpdateNotice(ui);
+    ImGui::PopStyleVar();
+
+    const float gap = 16 * unit;
+    const float card_width = (width - 2 * left - 2 * gap) / 3;
+    ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY() + 20 * unit, height - 110 * unit));
+    reveal(0.19f);
+    const ImVec2 card_size(card_width, 72 * unit);
+    if (PaintedButton(T("GAME"), card_size, ButtonLook::Card, T("GAME FILES"))) ui.page = Page::Game;
+    ImGui::SameLine(0, gap);
+    if (PaintedButton(T("SAVES"), card_size, ButtonLook::Card, T("BACKUPS"))) ui.page = Page::Saves;
+    ImGui::SameLine(0, gap);
+    if (PaintedButton(T("ADVANCED"), card_size, ButtonLook::Card, T("UPDATES"))) ui.page = Page::Advanced;
+    ImGui::PopStyleVar();
 }
 
 void ApplyTheme(float scale) {
@@ -1574,9 +1712,10 @@ void ApplyTheme(float scale) {
     st.WindowPadding = ImVec2(0, 0);
     st.FramePadding = ImVec2(10, 7);
     st.ItemSpacing = ImVec2(10, 9);
-    st.FrameRounding = 2;
-    st.PopupRounding = 2;
-    st.GrabRounding = 2;
+    st.FrameRounding = 6;
+    st.PopupRounding = 8;
+    st.GrabRounding = 4;
+    st.ScrollbarRounding = 6;
     st.GrabMinSize = 14;
     st.ScrollbarSize = 10;
     st.WindowBorderSize = 0;
@@ -1621,67 +1760,84 @@ void LoadFonts(float scale) {
     };
     g_font = add("segoeui.ttf", 18);
     g_font_head = add("georgiab.ttf", 20);
-    g_font_nav = add("georgiab.ttf", 21);
+    g_font_nav = add("segoeuib.ttf", 17);
     g_font_title = add("georgiab.ttf", 40);
-    g_font_logo = add("georgiab.ttf", 38);
-    g_font_play = add("georgiab.ttf", 30);
+    g_font_hero = add("georgiab.ttf", 62);
+    g_font_play = add("segoeuib.ttf", 20);
 }
 
-// the sidebar: the logo, the pages, a hint and the version
-void Sidebar(Ui& ui, float width, float height) {
-    ImDrawList* d = ImGui::GetWindowDrawList();
-    ImVec2 o = ImGui::GetWindowPos();
-    d->AddRectFilled(o, ImVec2(o.x + width, o.y + height), kSidebar);
-    d->AddLine(ImVec2(o.x + width - 1, o.y), ImVec2(o.x + width - 1, o.y + height), kLine);
-    float pad = ImGui::GetFontSize() * 1.8f;
+void WindowControls(HWND hwnd, float x, float height, float unit) {
+    const float width = 46 * unit;
+    const char* ids[] = {"##minimize", "##maximize", "##close"};
+    for (int i = 0; i < 3; ++i) {
+        ImGui::SetCursorPos(ImVec2(x + i * width, 0));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImU32(0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, i == 2 ? IM_COL32(159, 43, 36, 255) : IM_COL32(62, 48, 42, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(94, 54, 43, 255));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0);
+        const bool clicked = ImGui::Button(ids[i], ImVec2(width, height));
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(3);
 
-    ImGui::SetCursorPos(ImVec2(pad, pad * 1.1f));
-    ImGui::PushFont(g_font_logo);
-    ImGui::TextUnformatted("Indy");
-    ImGui::SameLine(0, 0);
-    ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
-    ImGui::TextUnformatted("Port");
-    ImGui::PopStyleColor();
-    ImGui::PopFont();
-    ImGui::SetCursorPosX(pad);
-    ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-    ImGui::PushTextWrapPos(width - pad * 0.6f);
-    ImGui::TextUnformatted("Indiana Jones and the Emperor's Tomb PC Port by MertCNOZ");
-    ImGui::PopTextWrapPos();
-    ImGui::PopStyleColor();
-
-    ImGui::SetCursorPosY(std::max(pad * 4.6f, ImGui::GetCursorPosY() + pad * 0.9f));
-    float row_h = ImGui::GetFontSize() * 3.2f;
-    for (int i = 0; i < int(Page::Count); i++) {
-        Page p = Page(i);
-        bool sel = ui.page == p;
-        ImGui::SetCursorPosX(0);
-        ImVec2 at = ImGui::GetCursorScreenPos();
-        if (sel) d->AddRectFilled(at, ImVec2(at.x + width - 1, at.y + row_h), kSelRow);
-        ImGui::PushID(i);
-        if (ImGui::InvisibleButton("page", ImVec2(width - 1, row_h))) ui.page = p;
-        bool hot = ImGui::IsItemHovered();
-        ImGui::PopID();
-        ImGui::PushFont(g_font_nav);
-        float th = ImGui::GetFontSize();
-        d->AddText(ImVec2(at.x + pad, at.y + (row_h - th) * 0.5f), sel ? kAccent : hot ? kText : IM_COL32(205, 196, 184, 255),
-                   T(kPageNames[i]));
-        ImGui::PopFont();
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        const ImVec2 corner = ImGui::GetItemRectMin();
+        const float cx = corner.x + width / 2, cy = corner.y + height / 2;
+        const float r = 4.5f * unit;
+        const ImU32 ink = ImGui::IsItemHovered() ? kText : kDim;
+        if (i == 0) {
+            draw->AddLine(ImVec2(cx - r, cy), ImVec2(cx + r, cy), ink, unit);
+            if (clicked) ShowWindow(hwnd, SW_MINIMIZE);
+        } else if (i == 1) {
+            const bool maximized = IsZoomed(hwnd);
+            if (maximized)
+                draw->AddRect(ImVec2(cx - r + 2 * unit, cy - r - 2 * unit), ImVec2(cx + r + 2 * unit, cy + r - 2 * unit), ink);
+            if (maximized)
+                draw->AddRectFilled(ImVec2(cx - r, cy - r), ImVec2(cx + r, cy + r), ImGui::IsItemHovered() ? IM_COL32(62, 48, 42, 255) : kBar);
+            draw->AddRect(ImVec2(cx - r, cy - r), ImVec2(cx + r, cy + r), ink);
+            if (clicked) ShowWindow(hwnd, maximized ? SW_RESTORE : SW_MAXIMIZE);
+        } else {
+            draw->AddLine(ImVec2(cx - r, cy - r), ImVec2(cx + r, cy + r), ink, unit);
+            draw->AddLine(ImVec2(cx + r, cy - r), ImVec2(cx - r, cy + r), ink, unit);
+            if (clicked) PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        }
     }
+}
 
-    float fs = ImGui::GetFontSize();
-    ImGui::SetCursorPos(ImVec2(pad, height - fs * 5.4f));
-    ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-    ImGui::PushTextWrapPos(width - pad);
-    ImGui::TextUnformatted(T("In the game: F9 shows the frame counter."));
-    ImGui::PopTextWrapPos();
-    ImGui::SetCursorPosX(pad);
-    ImGui::Text("v%s", kVersion);
-    ImGui::PopStyleColor();
+void TopBar(Ui& ui, float width, float height) {
+    const ImVec2 o = ImGui::GetWindowPos();
+    const float unit = ImGui::GetFontSize() / 18.0f;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(o, ImVec2(o.x + width, o.y + height), kBar);
+    draw->AddLine(ImVec2(o.x, o.y + height - 1), ImVec2(o.x + width, o.y + height - 1), kLine);
+    draw->AddCircleFilled(ImVec2(o.x + 22 * unit, o.y + height * 0.5f), 5 * unit, kAccent);
+    ImGui::PushFont(g_font_nav);
+    draw->AddText(ImVec2(o.x + 36 * unit, o.y + (height - ImGui::GetFontSize()) * 0.5f), kText, "IndyPort");
+    const float button_height = height - 14 * unit;
+    const float gap = 4 * unit;
+    float total = 0;
+    std::array<float, int(Page::Count)> widths{};
+    for (int i = 0; i < int(Page::Count); ++i) {
+        widths[i] = ImGui::CalcTextSize(T(kPageNames[i])).x + 19 * unit;
+        total += widths[i] + gap;
+    }
+    const float controls_x = width - 138 * unit;
+    float x = controls_x - total - 12 * unit;
+    g_caption = {0, 0, LONG(x), LONG(height)};
+    draw->AddLine(ImVec2(o.x + controls_x, o.y + height * 0.25f),
+                  ImVec2(o.x + controls_x, o.y + height * 0.75f), kLine);
+    for (int i = 0; i < int(Page::Count); ++i) {
+        ImGui::SetCursorPos(ImVec2(x, 7 * unit));
+        if (PaintedButton(T(kPageNames[i]), ImVec2(widths[i], button_height), ButtonLook::Tab,
+                          nullptr, ui.page == Page(i))) ui.page = Page(i);
+        x += widths[i] + gap;
+    }
+    ImGui::PopFont();
+    WindowControls(ui.window, controls_x, height, unit);
 }
 
 // the bar along the bottom: what will run, and Play
-void BottomBar(Ui& ui, float x, float y, float w, float h, bool focus_play) {
+void BottomBar(Ui& ui, float x, float y, float w, float h) {
     ImDrawList* d = ImGui::GetWindowDrawList();
     ImVec2 o = ImGui::GetWindowPos();
     d->AddRectFilled(ImVec2(o.x + x, o.y + y), ImVec2(o.x + x + w, o.y + y + h), kBar);
@@ -1698,28 +1854,17 @@ void BottomBar(Ui& ui, float x, float y, float w, float h, bool focus_play) {
     std::string summary = std::string(T(modes[s.display_mode])) + "  \xc2\xb7  " + res + "  \xc2\xb7  " +
                           std::to_string(s.render_percent) + T("% scale") + "  \xc2\xb7  " + fps;
     if (!ui.message.empty() && ImGui::GetTime() < ui.message_until) summary = ui.message;
-    ImVec2 ts = ImGui::CalcTextSize(summary.c_str());
-    d->AddText(ImVec2(o.x + x + pad, o.y + y + (h - ts.y) * 0.5f),
-               summary == ui.message ? kAccent : kDim, summary.c_str());
+    const float bw = ImGui::GetFontSize() * 14, bh = 55 * ImGui::GetFontSize() / 18.0f;
+    const float summary_w = w - bw - 2.6f * pad;
+    const ImVec2 ts = ImGui::CalcTextSize(summary.c_str(), nullptr, false, summary_w);
+    d->PushClipRect(ImVec2(o.x + x + pad, o.y + y),
+                    ImVec2(o.x + x + pad + summary_w, o.y + y + h), true);
+    d->AddText(g_font, ImGui::GetFontSize(), ImVec2(o.x + x + pad, o.y + y + std::max(0.0f, (h - ts.y) * 0.5f)),
+               summary == ui.message ? kAccent : kDim, summary.c_str(), nullptr, summary_w);
+    d->PopClipRect();
 
-    // Play, or the way to the game page while there is no game
-    float bw = ImGui::GetFontSize() * 13, bh = h - ImGui::GetFontSize() * 1.2f;
     ImGui::SetCursorPos(ImVec2(x + w - bw - pad, y + (h - bh) * 0.5f));
-    bool ready = ui.game.state == GameFiles::Ready;
-    const char* label = T(g_game_running ? "RUNNING" : ready ? "PLAY" : "CHOOSE GAME");
-    ImGui::PushStyleColor(ImGuiCol_Button, g_game_running ? IM_COL32(60, 52, 45, 255) : kPlay);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(206, 108, 28, 255));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(150, 72, 16, 255));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0);
-    ImGui::PushFont(ready ? g_font_play : g_font_nav);
-    if (focus_play) ImGui::SetKeyboardFocusHere();
-    if (ImGui::Button(label, ImVec2(bw, bh)) && !g_game_running) {
-        if (ready) Play(ui.window, ui.s.close_on_play, ui.game.release);
-        else ui.page = Page::Game;
-    }
-    ImGui::PopFont();
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor(3);
+    PlayButton(ui, false, bw);
 }
 
 void CreateTarget() {
@@ -1757,12 +1902,42 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 static LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return 1;
     switch (msg) {
+        case WM_NCCALCSIZE:
+            if (wp && IsZoomed(hwnd)) {
+                auto& rect = reinterpret_cast<NCCALCSIZE_PARAMS*>(lp)->rgrc[0];
+                const UINT dpi = GetDpiForWindow(hwnd);
+                const int pad = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+                const int x = GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) + pad;
+                const int y = GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) + pad;
+                InflateRect(&rect, -x, -y);
+            }
+            return 0;
+        case WM_NCACTIVATE:
+            return DefWindowProcW(hwnd, msg, wp, -1);
+        case WM_NCHITTEST: {
+            POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            ScreenToClient(hwnd, &point);
+            if (!IsZoomed(hwnd)) {
+                RECT rect{};
+                GetClientRect(hwnd, &rect);
+                const int edge = MulDiv(6, GetDpiForWindow(hwnd), 96);
+                const bool left = point.x < edge, right = point.x >= rect.right - edge;
+                if (point.y < edge) return left ? HTTOPLEFT : right ? HTTOPRIGHT : HTTOP;
+                if (point.y >= rect.bottom - edge) return left ? HTBOTTOMLEFT : right ? HTBOTTOMRIGHT : HTBOTTOM;
+                if (left) return HTLEFT;
+                if (right) return HTRIGHT;
+            }
+            return PtInRect(&g_caption, point) ? HTCAPTION : HTCLIENT;
+        }
         case WM_SIZE:
             if (wp != SIZE_MINIMIZED) {
                 g_resize_w = LOWORD(lp);
                 g_resize_h = HIWORD(lp);
             }
             return 0;
+        case WM_SETTINGCHANGE:
+            RefreshMotionPreference();
+            break;
         case WM_MOUSEWHEEL:
             g_wheel_seen = GET_WHEEL_DELTA_WPARAM(wp);
             break;
@@ -1784,6 +1959,7 @@ static LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    RefreshMotionPreference();
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD);
 
@@ -1801,12 +1977,18 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"IndyPort (PC)", WS_OVERLAPPEDWINDOW,
                                 wa.left + (wa.right - wa.left - w) / 2, wa.top + (wa.bottom - wa.top - h) / 2, w, h,
                                 nullptr, nullptr, inst, nullptr);
-    // the dark title bar (DWMWA_USE_IMMERSIVE_DARK_MODE)
-    BOOL dark = TRUE;
+    if (!hwnd) return 1;
+    // Keep the system's window shadow and corners, with a neutral outline.
     using DwmSet = HRESULT(WINAPI*)(HWND, DWORD, LPCVOID, DWORD);
-    if (HMODULE dwm = LoadLibraryW(L"dwmapi.dll"))
-        if (auto set = reinterpret_cast<DwmSet>(GetProcAddress(dwm, "DwmSetWindowAttribute")))
-            set(hwnd, 20, &dark, sizeof(dark));
+    if (HMODULE dwm = LoadLibraryW(L"dwmapi.dll")) {
+        if (auto set = reinterpret_cast<DwmSet>(GetProcAddress(dwm, "DwmSetWindowAttribute"))) {
+            const BOOL dark = TRUE;
+            const COLORREF border = RGB(54, 43, 39);
+            set(hwnd, 20, &dark, sizeof(dark));    // DWMWA_USE_IMMERSIVE_DARK_MODE
+            set(hwnd, 34, &border, sizeof(border)); // DWMWA_BORDER_COLOR
+        }
+        FreeLibrary(dwm);
+    }
     if (!CreateDevice(hwnd)) {
         MessageBoxW(hwnd, L"Direct3D 11 is not available.", L"IndyPort", MB_ICONERROR);
         return 1;
@@ -1838,6 +2020,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     LoadModes(ui);
     bool quit = false;
     double checked = 0;
+    double page_opened = 0;
     while (!quit) {
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -1895,33 +2078,33 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         ImGui::PushFont(g_font);
         float fs = ImGui::GetFontSize();
         float bar_h = fs * 4.4f;
-        float side_w = fs * 15;
-        Sidebar(ui, side_w, io.DisplaySize.y);
+        const float top_h = fs * 2.9f;
+        TopBar(ui, io.DisplaySize.x, top_h);
 
         // a new page puts the focus on its first control (Home: on Play), shown at once, so the first A or Enter
         // presses it
         bool new_page = int(ui.page) != ui.shown;
         ui.shown = int(ui.page);
-        float page_w = io.DisplaySize.x - side_w, page_h = io.DisplaySize.y - bar_h;
-        bool home = ui.page == Page::Home;
+        if (new_page) page_opened = ImGui::GetTime();
+        const bool home = ui.page == Page::Home;
+        const float page_h = io.DisplaySize.y - top_h - (home ? 0 : bar_h);
         float pad = fs * 2.2f;
-        ImGui::SetCursorPos(ImVec2(side_w, 0));
-        ImGui::BeginChild("page", ImVec2(page_w, page_h), ImGuiChildFlags_None,
-                          home ? ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse : 0);
+        ImGui::SetCursorPos(ImVec2(0, top_h));
+        ImGui::BeginChild("page", ImVec2(io.DisplaySize.x, page_h));
         if (new_page) {
             ImGui::SetScrollY(0);
-            if (!home) {
-                ImGui::SetWindowFocus();
-                ImGui::SetKeyboardFocusHere();
-            }
-            ImGui::GetCurrentContext()->NavDisableHighlight = false;
+            ImGui::SetWindowFocus();
+            if (!home) ImGui::SetKeyboardFocusHere();
+            ImGui::GetCurrentContext()->NavDisableHighlight = home;
         }
-        ImGui::Indent(pad);
+        const float reveal = g_motion ? EaseOut(float(ImGui::GetTime() - page_opened) / 0.28f) : 1.0f;
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.72f + reveal * 0.28f);
+        if (!home) ImGui::Indent(pad);
         ImGui::SetCursorPosY(home ? 0 : pad * 0.8f);
         g_col = pad + fs * 13;
         ImGui::PushItemWidth(ControlWidth());
         switch (ui.page) {
-            case Page::Home: PageHome(ui, std::min(page_h * 0.52f, page_w / 2.2f)); break;
+            case Page::Home: PageHome(ui, page_h, page_opened, new_page); break;
             case Page::Graphics: PageGraphics(ui); break;
             case Page::Game: PageGame(ui); break;
             case Page::Controls: PageControls(ui); break;
@@ -1931,12 +2114,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             default: break;
         }
         ImGui::PopItemWidth();
-        ImGui::Dummy(ImVec2(0, pad));
-        ImGui::Unindent(pad);
+        if (!home) {
+            ImGui::Dummy(ImVec2(0, pad));
+            ImGui::Unindent(pad);
+        }
+        ImGui::PopStyleVar();
         ImGui::EndChild();
 
-        if (new_page && home) ImGui::SetWindowFocus();
-        BottomBar(ui, side_w, page_h, page_w, bar_h, new_page && home);
+        if (!home) BottomBar(ui, 0, top_h + page_h, io.DisplaySize.x, bar_h);
         ImGui::PopFont();
         ImGui::End();
 
