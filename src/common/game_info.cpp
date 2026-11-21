@@ -35,6 +35,7 @@ void SaveKeys(void* table);
 void MouseWindow(void* hwnd);
 bool MouseMessage(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result);
 void MapPad(int port, input::Pad& pad);
+bool HudSpread();  // keyboard.cpp
 
 // the settings file's extra keys: the gamepad mapping, and the modern button icons on unless the file says otherwise
 void Load(const void* table) {
@@ -106,5 +107,12 @@ const app::GameInfo app::kGame = {
 #ifdef INDY_EU
     .cache = "Z_EU",  // the Europe release installs its own data (other files, five languages) to Z:
     .languages = true,  // English, French, German, Spanish, Italian: the launcher's game language
+#endif
+    .hud_spread = game::HudSpread,  // the HUD to the sides only while playing
+    // the other release's disc goes to its own exe (IndyET.exe "Europe.iso" starts IndyET_EU.exe on it)
+#ifdef INDY_EU
+    .handovers = {{"c7a844a47a709312b4d73f838c36c39549800ce9", L"IndyET"}},  // USA
+#else
+    .handovers = {{"4e93d98cf3a67b4865c61dcaf3833912a698ab5e", L"IndyET_EU"}},  // Europe
 #endif
 };

@@ -1,8 +1,8 @@
 diff --git a/runtime/app/app.h b/runtime/app/app.h
-index 229e2fa..d0ff27e 100644
+index 229e2fa..0fe2de0 100644
 --- a/runtime/app/app.h
 +++ b/runtime/app/app.h
-@@ -22,14 +22,29 @@ struct Settings {
+@@ -22,14 +22,30 @@ struct Settings {
      uint32_t render_percent = 100;   // of the output height
      uint32_t fps_cap = 60;           // 0 unlimited, kFpsCapRefresh the monitor's refresh rate
      bool vsync = true;
@@ -16,6 +16,7 @@ index 229e2fa..d0ff27e 100644
 +    uint32_t aspect = 0;               // 0 widescreen: fills the screen with a wider view, 1 the console's 4:3, 2 stretched
 +    bool fxaa = false;                 // FXAA on the final picture
 +    bool seam_fill = true;             // hairline cracks between a scene's triangles filled from their sides
++    uint32_t hud_position = 0;         // widescreen HUD: 0 in the 4:3 middle, 1 spread over 16:9, 2 to the screen's edges
 +    uint32_t sharpen = 40;             // 0-100: contrast adaptive sharpening of the final picture
 +    bool video_filter = true;          // movies scaled up with a Catmull-Rom filter instead of bilinear
 +    bool ui_upscale = true;            // sharper fonts, menus and HUD: screen space textures upscaled (gpu/ui_upscale.h)
@@ -33,7 +34,7 @@ index 229e2fa..d0ff27e 100644
  void Load();
  void Save();
  void LogSettings();  // every setting, as the settings file has them
-@@ -43,10 +58,15 @@ Mode Output();
+@@ -43,10 +59,15 @@ Mode Output();
  float RenderScale(uint32_t guest_height);
  // the output is 3:2 or wider: the console reports a widescreen TV and the frame is shown 16:9, else 4:3 as on a 4:3 TV
  bool Widescreen();
@@ -51,13 +52,19 @@ index 229e2fa..d0ff27e 100644
  struct GameFiles {
      std::filesystem::path dir;
      std::vector<uint8_t> xbe;
-@@ -100,9 +120,16 @@ struct GameInfo {
+@@ -100,9 +121,22 @@ struct GameInfo {
      void (*rumble)(int port, uint16_t& left, uint16_t& right);
      // xbe file name, SHA-1: other releases the executable runs, each from its own [xbe] named config
      std::vector<std::pair<const char*, const char*>> releases;
 +    // the hard disk's Z: folder (the title's cache, where a game installs data from its disc), "Z" when null: a
 +    // release whose installed data differs keeps its own, while the saves on E: stay shared
 +    const char* cache = nullptr;
++    // the HUD may be spread towards the screen's sides now (the hud_position setting): playing, not in a menu, whose
++    // pieces stay in the middle; null: never
++    bool (*hud_spread)() = nullptr;
++    // other releases of the game and the executables beside this one that run them (xbe SHA-1, exe name without .exe):
++    // a disc of one of them, chosen or given on the command line, is handed to its executable
++    std::vector<std::pair<const char*, const wchar_t*>> handovers;
 +    // the release has several languages: the language setting is the console's; else the console is English
 +    bool languages = false;
  };
@@ -69,17 +76,79 @@ index 229e2fa..d0ff27e 100644
  void Pace();
  
 diff --git a/runtime/app/game_files.cpp b/runtime/app/game_files.cpp
-index a7ddee4..7cfb465 100644
+index a7ddee4..f029f6e 100644
 --- a/runtime/app/game_files.cpp
 +++ b/runtime/app/game_files.cpp
-@@ -1,4 +1,5 @@
+@@ -1,5 +1,8 @@
 -// The game in assets: its files, or a disc image (.iso) with this executable's xbe on it. The xbe must be the one
-+// The game: the folder or disc image chosen in the settings (game_path), else assets beside the exe or above it; its
-+// files, or a disc image (.iso) with this executable's xbe on it. The xbe must be the one
- // this executable was recompiled from; another release's would run its own data under this code.
+-// this executable was recompiled from; another release's would run its own data under this code.
++// The game: the folder or disc image given on the command line (IndyET.exe "D:\Games\game.iso", as front ends such
++// as EmulationStation start games), else the one chosen in the settings (game_path), else assets beside the exe or
++// above it; its files, or a disc image (.iso) with this executable's xbe on it. The xbe must be the one this
++// executable was recompiled from; another release's would run its own data under this code, so a release with its
++// own executable (GameInfo::handovers) is handed to it.
  #ifndef WIN32_LEAN_AND_MEAN
  #define WIN32_LEAN_AND_MEAN
-@@ -70,53 +71,83 @@ std::string Sha1(const std::vector<uint8_t>& data) {
+ #endif
+@@ -47,6 +50,57 @@ bool Runs(const std::string& sha) {
+     return false;
+ }
+ 
++// the command line's arguments after the program, quotes taken off
++std::vector<std::wstring> Args() {
++    std::vector<std::wstring> out;
++    const wchar_t* p = GetCommandLineW();
++    bool first = true;
++    while (*p) {
++        while (*p == L' ' || *p == L'\t') p++;
++        if (!*p) break;
++        std::wstring arg;
++        bool quoted = false;
++        for (; *p && (quoted || (*p != L' ' && *p != L'\t')); p++) {
++            if (*p == L'"') quoted = !quoted;
++            else arg += *p;
++        }
++        if (!first) out.push_back(arg);
++        first = false;
++    }
++    return out;
++}
++
++// the game's folder or disc image given on the command line: the first argument that is not an option
++fs::path GivenPath() {
++    for (const std::wstring& a : Args())
++        if (a.rfind(L"--", 0) != 0) return fs::path(a);
++    return {};
++}
++
++// a copy of another release with its own executable beside this one: that one is started on it (with this one's
++// options, --instance), and this one ends
++bool HandOver(const std::string& sha, const fs::path& place) {
++    for (auto& [release, exe_name] : kGame.handovers) {
++        if (sha != release) continue;
++        fs::path exe = ExeDir() / (std::wstring(exe_name) + L".exe");
++        std::error_code ec;
++        if (!fs::exists(exe, ec)) return false;
++        std::wstring line = L"\"" + exe.wstring() + L"\" \"" + place.wstring() + L"\"";
++        for (const std::wstring& a : Args())
++            if (a.rfind(L"--", 0) == 0 && a != L"--relaunched") line += L" " + a;
++        STARTUPINFOW si{sizeof(si)};
++        PROCESS_INFORMATION pi{};
++        if (!CreateProcessW(exe.c_str(), line.data(), nullptr, nullptr, FALSE, 0, nullptr, ExeDir().c_str(), &si, &pi))
++            return false;
++        AllowSetForegroundWindow(pi.dwProcessId);
++        CloseHandle(pi.hThread);
++        CloseHandle(pi.hProcess);
++        LOGR("Game: %s is another release, handed to %s", place.string().c_str(), exe.filename().string().c_str());
++        return true;
++    }
++    return false;
++}
++
+ bool ReadHostFile(const fs::path& path, std::vector<uint8_t>& out) {
+     std::ifstream f(path, std::ios::binary);
+     if (!f) return false;
+@@ -70,59 +124,107 @@ std::string Sha1(const std::vector<uint8_t>& data) {
      return hex;
  }
  
@@ -96,11 +165,12 @@ index a7ddee4..7cfb465 100644
  bool FindGame(GameFiles& game) {
 -    fs::path assets = FindAssets();
 -    std::vector<fs::path> isos;
-+    // where to look, in order: the folder or disc image chosen in the settings (the launcher), then assets; in a
-+    // folder its extracted files before its disc images
++    // where to look, in order: the folder or disc image given on the command line or else chosen in the settings
++    // (the launcher), then assets; in a folder its extracted files before its disc images
 +    struct Place {
 +        fs::path path;
 +        bool iso;
++        bool named = false;  // given or chosen: another release there is handed over at once
 +    };
 +    std::vector<Place> places;
      std::error_code ec;
@@ -119,21 +189,31 @@ index a7ddee4..7cfb465 100644
 +        std::sort(found.begin(), found.end());
 +        for (auto& iso : found) places.push_back({iso, true});
 +    };
-+    if (fs::path chosen = ChosenPath(); !chosen.empty()) {
++    fs::path given = GivenPath();
++    if (!given.empty()) {
++        if (fs::is_directory(given, ec)) add_dir(given);
++        else if (fs::is_regular_file(given, ec)) places.push_back({given, true});
++        else LOGR("Game: %s from the command line is not there", given.string().c_str());
++    }
++    if (fs::path chosen = ChosenPath(); given.empty() && !chosen.empty()) {
 +        if (fs::is_directory(chosen, ec)) add_dir(chosen);
 +        else if (fs::is_regular_file(chosen, ec)) places.push_back({chosen, true});
 +        else LOGR("Game: %s from the settings is not there", Get().game_path.c_str());
 +    }
++    for (Place& p : places) p.named = true;
 +    if (fs::path assets = FindAssets(); !assets.empty()) add_dir(assets);
  
 -    // the first copy with this xbe wins, the extracted files before any image; another release is kept to offer
-+    // the first copy with this xbe wins; another release is kept to offer
++    // the first copy with this xbe wins; another release given or chosen goes to its own executable, else one is
++    // kept to offer
      GameFiles other;
      std::unique_ptr<kernel::Disc> other_disc;
      fs::path other_name;
 -    auto consider = [&](const fs::path& name, std::vector<uint8_t> xbe, std::unique_ptr<kernel::Disc> disc) {
++    std::string other_sha;
++    bool handed = false;
 +    auto consider = [&](const fs::path& dir, const fs::path& name, std::vector<uint8_t> xbe,
-+                        std::unique_ptr<kernel::Disc> disc) {
++                        std::unique_ptr<kernel::Disc> disc, bool named) {
          std::string sha = Sha1(xbe);
          bool match = Runs(sha);
          LOGR("Game: %s in %s, sha1 %s%s", IMAGE_XBE, name.string().c_str(), sha.c_str(), match ? "" : ", another release");
@@ -143,11 +223,16 @@ index a7ddee4..7cfb465 100644
              kernel::MountDisc(std::move(disc));
              return true;
          }
++        if (named && HandOver(sha, name)) {
++            handed = true;
++            return true;
++        }
          if (other_name.empty()) {
 -            other = {assets, std::move(xbe)};
 +            other = {dir, std::move(xbe)};
              other_disc = std::move(disc);
              other_name = name;
++            other_sha = sha;
          }
          return false;
      };
@@ -158,8 +243,9 @@ index a7ddee4..7cfb465 100644
 +    for (const Place& place : places) {
 +        std::vector<uint8_t> xbe;
 +        if (!place.iso) {
-+            if (ReadHostFile(place.path / IMAGE_XBE, xbe) && consider(place.path, place.path, std::move(xbe), nullptr))
-+                return true;
++            if (ReadHostFile(place.path / IMAGE_XBE, xbe) &&
++                consider(place.path, place.path, std::move(xbe), nullptr, place.named))
++                return !handed;
 +            continue;
 +        }
          auto disc = std::make_unique<kernel::Disc>();
@@ -176,10 +262,17 @@ index a7ddee4..7cfb465 100644
              continue;
          }
 -        if (consider(iso, std::move(xbe), std::move(disc))) return true;
-+        if (consider(place.path.parent_path(), place.path, std::move(xbe), std::move(disc))) return true;
++        if (consider(place.path.parent_path(), place.path, std::move(xbe), std::move(disc), place.named)) return !handed;
      }
  
      if (other_name.empty()) {
+         MessageBoxW(nullptr, kGame.missing, kGame.short_title, MB_ICONERROR);
+         return false;
+     }
++    if (HandOver(other_sha, other_name)) return false;
+     std::wstring text = other_name.filename().wstring() +
+                         L" is a different release of the game than this build was made from, and will most likely "
+                         L"crash.\n\nStart it anyway?";
 diff --git a/runtime/app/main.cpp b/runtime/app/main.cpp
 index e36f7ac..9a07980 100644
 --- a/runtime/app/main.cpp
@@ -194,10 +287,10 @@ index e36f7ac..9a07980 100644
  }
  
 diff --git a/runtime/app/settings.cpp b/runtime/app/settings.cpp
-index 075b3b7..b3d9df6 100644
+index 075b3b7..f9e66a0 100644
 --- a/runtime/app/settings.cpp
 +++ b/runtime/app/settings.cpp
-@@ -54,6 +54,17 @@ void Load() {
+@@ -54,6 +54,18 @@ void Load() {
      s.dump_textures = t["dump_textures"].value_or(s.dump_textures);
      s.texture_dump_format = std::min(t["texture_dump_format"].value_or(s.texture_dump_format), 1u);
      s.join_ip = t["join_ip"].value_or(s.join_ip);
@@ -209,13 +302,14 @@ index 075b3b7..b3d9df6 100644
 +    s.full_width = t["full_width"].value_or(s.full_width);
 +    s.fxaa = t["fxaa"].value_or(s.fxaa);
 +    s.seam_fill = t["seam_fill"].value_or(s.seam_fill);
++    s.hud_position = std::min(t["hud_position"].value_or(s.hud_position), 2u);
 +    s.fov = std::clamp(t["fov"].value_or(s.fov), 70u, 120u);
 +    s.game_path = t["game_path"].value_or(s.game_path);
 +    s.language = std::clamp(t["game_language"].value_or(s.language), 1u, 9u);
      for (const Option& o : kGame.options) {
          if (o.flag) *o.flag = t[o.key].value_or(*o.flag);
          else *o.value = t[o.key].value_or(*o.value);
-@@ -75,7 +86,18 @@ toml::table Table() {
+@@ -75,7 +87,19 @@ toml::table Table() {
                    {"custom_textures", s.custom_textures},
                    {"dump_textures", s.dump_textures},
                    {"texture_dump_format", int64_t(s.texture_dump_format)},
@@ -230,12 +324,13 @@ index 075b3b7..b3d9df6 100644
 +                  {"full_width", s.full_width},
 +                  {"fxaa", s.fxaa},
 +                  {"seam_fill", s.seam_fill},
++                  {"hud_position", int64_t(s.hud_position)},
 +                  {"fov", int64_t(s.fov)},
 +                  {"game_language", int64_t(s.language)}};
      for (const Option& o : kGame.options) {
          if (o.flag) t.insert(o.key, *o.flag);
          else t.insert(o.key, int64_t(*o.value));
-@@ -118,6 +140,7 @@ Mode Output() {
+@@ -118,6 +142,7 @@ Mode Output() {
  }
  
  bool Widescreen() {
@@ -243,7 +338,7 @@ index 075b3b7..b3d9df6 100644
      // asked per frame and per HUD quad: the desktop mode lookup only runs when the resolution setting changes
      static std::atomic<uint64_t> key{~0ull};
      static std::atomic<bool> wide{true};
-@@ -130,6 +153,19 @@ bool Widescreen() {
+@@ -130,6 +155,19 @@ bool Widescreen() {
      return wide;
  }
  
@@ -372,7 +467,7 @@ index 7e6507d..b72ef2d 100644
      va_list ap;
      va_start(ap, fmt);
 diff --git a/runtime/gpu/d3d12.cpp b/runtime/gpu/d3d12.cpp
-index 3f9d4e7..1f49ee5 100644
+index 3f9d4e7..f8ceabe 100644
 --- a/runtime/gpu/d3d12.cpp
 +++ b/runtime/gpu/d3d12.cpp
 @@ -13,6 +13,7 @@
@@ -701,7 +796,7 @@ index 3f9d4e7..1f49ee5 100644
  }
  
  void D3D12Backend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k) {
-@@ -2527,9 +2682,106 @@ void D3D12Backend::CaptureDraw(const State& s, uint32_t prim, uint32_t count, co
+@@ -2527,9 +2682,111 @@ void D3D12Backend::CaptureDraw(const State& s, uint32_t prim, uint32_t count, co
      CaptureTextures(s, stages);
  }
  
@@ -740,9 +835,9 @@ index 3f9d4e7..1f49ee5 100644
 +    }
 +}
 +
-+// the least and greatest x of the vertices a screen space draw uses, from its raw XYZRHW positions; false when
-+// they cannot be read (the converted path, or a position outside the buffer)
-+bool ScreenSpanX(const Assembled& a, float& lo, float& hi, float* zmax = nullptr) {
++// the least and greatest x of the vertices a screen space draw uses, from its raw XYZRHW positions, and their
++// greatest z and y; false when they cannot be read (the converted path, or a position outside the buffer)
++bool ScreenSpanX(const Assembled& a, float& lo, float& hi, float* zmax = nullptr, float* ymax = nullptr) {
 +    if (!a.vertices.empty()) {
 +        // the converted copy: float4 per present register, the position (v0) first
 +        uint32_t regs = uint32_t(std::popcount(a.regs));
@@ -750,11 +845,13 @@ index 3f9d4e7..1f49ee5 100644
 +        lo = 1e30f;
 +        hi = -1e30f;
 +        if (zmax) *zmax = -1e30f;
++        if (ymax) *ymax = -1e30f;
 +        for (uint32_t v = 0; v < a.vertex_count; v++) {
 +            float x = a.vertices[size_t(v) * regs * 4];
 +            lo = std::min(lo, x);
 +            hi = std::max(hi, x);
 +            if (zmax) *zmax = std::max(*zmax, a.vertices[size_t(v) * regs * 4 + 2]);
++            if (ymax) *ymax = std::max(*ymax, a.vertices[size_t(v) * regs * 4 + 1]);
 +        }
 +        return true;
 +    }
@@ -767,18 +864,21 @@ index 3f9d4e7..1f49ee5 100644
 +    lo = 1e30f;
 +    hi = -1e30f;
 +    if (zmax) *zmax = -1e30f;
++    if (ymax) *ymax = -1e30f;
 +    for (uint32_t i = 0; i < n; i++) {
 +        uint32_t idx = i;
 +        if (a.index_src && a.index_count)
 +            idx = a.index16 ? static_cast<const uint16_t*>(a.index_src)[i] : static_cast<const uint32_t*>(a.index_src)[i];
 +        int64_t v = int64_t(idx) + a.base_vertex;
 +        if (v < 0 || uint64_t(v) * vb.stride + e.offset + 12 > vb.bytes) return false;
-+        float x, z;
++        float x, y, z;
 +        std::memcpy(&x, vb.src + v * vb.stride + e.offset, 4);
++        std::memcpy(&y, vb.src + v * vb.stride + e.offset + 4, 4);
 +        std::memcpy(&z, vb.src + v * vb.stride + e.offset + 8, 4);
 +        lo = std::min(lo, x);
 +        hi = std::max(hi, x);
 +        if (zmax) *zmax = std::max(*zmax, z);
++        if (ymax) *ymax = std::max(*ymax, y);
 +    }
 +    return true;
 +}
@@ -809,7 +909,7 @@ index 3f9d4e7..1f49ee5 100644
      fputc('\n', cap_);
  }
  
-@@ -2628,16 +2880,19 @@ void D3D12Backend::SetViewportScissor(const State& s, uint32_t gw) {
+@@ -2628,16 +2885,19 @@ void D3D12Backend::SetViewportScissor(const State& s, uint32_t gw) {
      float W = float(bound_rt_ ? bound_rt_->w : bound_ds_->w);
      float H = float(bound_rt_ ? bound_rt_->h : bound_ds_->h);
      D3D12_VIEWPORT vp{0, 0, W, H, 0, 1};
@@ -833,7 +933,7 @@ index 3f9d4e7..1f49ee5 100644
      }
      D3D12_RECT rect{std::clamp<LONG>(x0, 0, LONG(W)), std::clamp<LONG>(y0, 0, LONG(H)),
                      std::clamp<LONG>(x1, 0, LONG(W)), std::clamp<LONG>(y1, 0, LONG(H))};
-@@ -2834,6 +3089,8 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2834,6 +3094,8 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
      // stage textures, then the pixel shader made for them
      DrawTextures stages;
@@ -842,7 +942,7 @@ index 3f9d4e7..1f49ee5 100644
      if (!BindStageTexturesAndTargets(s, stages)) return;
      PixelKey pk = MakePixelKey(s, stages.info);
      pk.quad = sh.quad;
-@@ -2855,6 +3112,25 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2855,6 +3117,38 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
      GuestExtent size;
      SurfaceSize(bound_rt_ ? s.rt : s.zs, size.w, size.h);
      DrawConstants c{};
@@ -853,12 +953,25 @@ index 3f9d4e7..1f49ee5 100644
 +    // the 3D view is, so they keep their shape and the 3D items drawn into them (the inventory wheel) stay inside
 +    // them. Full width draws (fades, loading pictures, movies) and anything placed at a depth stay as they are
 +    if (a.pretransformed && size.w == guest_w_ && size.h == guest_h_) {
-+        float wide = app::WideFactor(), lo = 0, hi = 0, zmax = 0;
++        float wide = app::WideFactor(), lo = 0, hi = 0, zmax = 0, ymax = 0;
 +        float fov = float(std::clamp(app::Get().fov, 70u, 120u)) / 100.0f;
-+        if ((wide > 1.01f || std::fabs(fov - 1) > 1e-3f) && ScreenSpanX(a, lo, hi, &zmax) &&
++        if ((wide > 1.01f || std::fabs(fov - 1) > 1e-3f) && ScreenSpanX(a, lo, hi, &zmax, &ymax) &&
 +            hi - lo < 0.9f * float(size.w) && zmax <= 1e-3f) {
 +            c.hud[0] = 1.0f / (wide * fov);
 +            c.hud[1] = 1.0f / fov;
++            // the HUD spread towards the sides (hud_position, while the game says so): a piece wholly in a top
++            // corner (the outer 30% of the width, the top 30% of the height: the gauges) keeps its size and moves
++            // out by the same distance as every other piece there, so the parts of one gauge stay together; the
++            // leftmost pieces land at the 16:9 area's edge or the screen's. Everything else stays: the item wheel
++            // (its side rings sit at about 31% and 69%), the tip box (its "Tip:" in the left 30%, lower down),
++            // subtitles and prompts
++            uint32_t where = app::Get().hud_position;
++            if (where && app::kGame.hud_spread && app::kGame.hud_spread() && ymax <= 0.3f * float(size.h)) {
++                float area = where == 1 ? std::min(1.0f, (16.0f / 9.0f) / app::ShownAspect()) : 1.0f;
++                float w = float(size.w), out = 0.5f * w * (area - c.hud[0]);
++                int side = hi <= 0.3f * w ? -1 : lo >= 0.7f * w ? 1 : 0;
++                if (out > 0) c.hud[2] = float(side) * out;
++            }
 +        }
 +    }
 +    if (movie_draw_ && a.pretransformed) {
@@ -868,7 +981,7 @@ index 3f9d4e7..1f49ee5 100644
      UploadConstants(s, sh, k, stages, size, c);
      if (ext_) binds_ = {};
  
-@@ -2877,9 +3153,9 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
+@@ -2877,9 +3171,9 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
  
  // a guest rect scaled to the target and clamped to it
  D3D12_RECT ScaledRect(const Target& t, int x0, int y0, int x1, int y1) {
@@ -881,7 +994,7 @@ index 3f9d4e7..1f49ee5 100644
  }
  
  // rs: the rects buffer, reused across targets
-@@ -3055,8 +3331,8 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3055,8 +3349,8 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
      D3D12_CPU_DESCRIPTOR_HANDLE rh = Cpu(rtv_heap_.Get(), dst_t.view, rtv_inc_);
      cl_->OMSetRenderTargets(1, &rh, FALSE, nullptr);
      float gw = src_t.gw * l.kx, gh = src_t.gh * l.ky;  // the source in the guest pixels the rects use
@@ -892,7 +1005,7 @@ index 3f9d4e7..1f49ee5 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3065,7 +3341,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3065,7 +3359,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          DrawnRect r{.x0 = 0, .y0 = 0, .x1 = whole_w, .y1 = whole_h};
          if (listed) r = ReadDrawnRect(l.src_rects, l.dst_points, i);
          if (r.x1 <= r.x0 || r.y1 <= r.y0) continue;
@@ -901,7 +1014,7 @@ index 3f9d4e7..1f49ee5 100644
                            0, 1};
          LONG right = std::min(LONG(vp.TopLeftX + vp.Width), LONG(dst_t.w));
          LONG bottom = std::min(LONG(vp.TopLeftY + vp.Height), LONG(dst_t.h));
-@@ -3075,7 +3351,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
+@@ -3075,7 +3369,7 @@ void D3D12Backend::CopyByDraw(const Target& src_t, ID3D12Resource* src_res, D3D1
          cl_->RSSetScissorRects(1, &scissor);
          binds_ = {};
          float uv[4] = {r.x0 / gw, r.y0 / gh, (r.x1 - r.x0) / gw, (r.y1 - r.y0) / gh};
@@ -910,7 +1023,7 @@ index 3f9d4e7..1f49ee5 100644
          float mul = 1 / dst_t.range;
          BlitOptions o{.alpha = true, .taps = taps, .mul = mul, .rtv = dst_t.fmt};
          Blit(src_res, src_t.fmt, uv, o);
-@@ -3091,7 +3367,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3091,7 +3385,7 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
      Transition(dst_t.res.Get(), dst_t.state, D3D12_RESOURCE_STATE_COPY_DEST);
      D3D12_TEXTURE_COPY_LOCATION dl{dst_t.res.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
      D3D12_TEXTURE_COPY_LOCATION sl{src_res, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
@@ -919,7 +1032,7 @@ index 3f9d4e7..1f49ee5 100644
      bool listed = l.count && l.src_rects;
      uint32_t n = listed ? l.count : 1;
      for (uint32_t i = 0; i < n; i++) {
-@@ -3101,15 +3377,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
+@@ -3101,15 +3395,15 @@ void D3D12Backend::CopyByRegion(const Target& src_t, ID3D12Resource* src_res, D3
          if (listed) {
              GuestRect r = ReadGuestRect(l.src_rects, i);
              b.left = ScaleUnsigned(r.left, dst_scale);
@@ -938,7 +1051,7 @@ index 3f9d4e7..1f49ee5 100644
              }
          }
          if (b.right <= b.left || b.bottom <= b.top || dx >= dst_t.w || dy >= dst_t.h) continue;
-@@ -3230,10 +3506,74 @@ void D3D12Backend::UploadGammaRamp() {
+@@ -3230,10 +3524,74 @@ void D3D12Backend::UploadGammaRamp() {
      cl_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
  }
  
@@ -1016,7 +1129,7 @@ index 3f9d4e7..1f49ee5 100644
      float w = float(bb_w_);
      float h = float(bb_h_);
      float vw = std::min(w, h * aspect);
-@@ -3245,7 +3585,8 @@ void D3D12Backend::BlitFrame(Target& t) {
+@@ -3245,7 +3603,8 @@ void D3D12Backend::BlitFrame(Target& t) {
      cl_->RSSetScissorRects(1, &scissor);
      binds_ = {};
      Transition(t.res.Get(), t.state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -1026,7 +1139,7 @@ index 3f9d4e7..1f49ee5 100644
  }
  
  void D3D12Backend::RenderUi() {
-@@ -3261,6 +3602,7 @@ void D3D12Backend::RenderUi() {
+@@ -3261,6 +3620,7 @@ void D3D12Backend::RenderUi() {
  }
  
  void D3D12Backend::DrawFrame(Target* t, uint32_t bi) {
@@ -1034,7 +1147,7 @@ index 3f9d4e7..1f49ee5 100644
      D3D12_RESOURCE_STATES bs = D3D12_RESOURCE_STATE_PRESENT;
      Transition(bb_[bi].Get(), bs, D3D12_RESOURCE_STATE_RENDER_TARGET);
      D3D12_CPU_DESCRIPTOR_HANDLE rh = Cpu(rtv_heap_.Get(), kRtvCount + bi, rtv_inc_);
-@@ -3324,12 +3666,12 @@ void LogPerf() {
+@@ -3324,12 +3684,12 @@ void LogPerf() {
          Perf& p = g_perf;
          double n = double(perf_frames);
          double host = p.draw + p.clear + p.copy + p.present + p.sync;
@@ -1049,7 +1162,7 @@ index 3f9d4e7..1f49ee5 100644
               "resource %.2f fence %.2f flush %.2f copy %.2f, next frame %.2f) | read-backs waited for: %.1f lock, "
               "%.1f NOOVERWRITE",
               g_perf_capture_ns.exchange(0) / n / 1e6, g_perf_wait_ns.exchange(0) / n / 1e6,
-@@ -3338,7 +3680,7 @@ void LogPerf() {
+@@ -3338,7 +3698,7 @@ void LogPerf() {
               g_perf_wait_kind_ns[3].exchange(0) / n / 1e6, g_perf_wait_kind_ns[4].exchange(0) / n / 1e6,
               g_perf_wait_kind_ns[5].exchange(0) / n / 1e6, g_perf_sync_block.exchange(0) / n,
               g_perf_sync_late.exchange(0) / n);
@@ -1058,7 +1171,7 @@ index 3f9d4e7..1f49ee5 100644
               "hashed | %.1f tex uploads %.2f MB, %.1f new tex, %.1f new targets, %.1f target uploads, %.1f shrinks, "
               "%.1f read-backs %.1f late | %llu shaders %llu psos this second",
               p.draws / n, p.raw / n, p.verts / n / 1000.0, p.upload / n / 1048576.0, p.overflow / n, p.sigs / n,
-@@ -3394,12 +3736,14 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
+@@ -3394,12 +3754,14 @@ void D3D12Backend::WaitGpuFrame(uint64_t n) {
  void D3D12Backend::ApplySettings() {
      if (texturedumper::Update()) ReleasePackTextures();
      float want = app::RenderScale(guest_h_);
@@ -1075,7 +1188,7 @@ index 3f9d4e7..1f49ee5 100644
          bound_rt_ = bound_ds_ = nullptr;
      }
 diff --git a/runtime/gpu/shaders.cpp b/runtime/gpu/shaders.cpp
-index 9ff7b67..c293ac1 100644
+index 9ff7b67..67ce63b 100644
 --- a/runtime/gpu/shaders.cpp
 +++ b/runtime/gpu/shaders.cpp
 @@ -55,6 +55,7 @@ const char* kCommonTail = R"(    float4 spread[4];
@@ -1126,18 +1239,19 @@ index 9ff7b67..c293ac1 100644
      float4 c = 0;
      int n = (int)w.z;
      for (int y = 0; y < n; y++)
-@@ -769,7 +794,9 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
+@@ -769,7 +794,10 @@ std::string FixedVertexHlsl(uint16_t regs, bool pretransformed, uint64_t decode,
      if (pretransformed) {
          s += "    float4 rhw = " + v(0, "float4(0,0,0,1)") + ";\n";
          s += "    float w = rhw.w == 0 ? 1 : 1 / rhw.w;\n";
 -        s += "    oPos = float4(rhw.xy, rhw.z / surf.z, w);\n";
-+        // on a widened view the HUD is drawn narrower about the centre and movies are fitted (hud.xy, 1 otherwise)
-+        s += "    oPos = float4((rhw.x - surf.x * 0.5) * hud.x + surf.x * 0.5, (rhw.y - surf.y * 0.5) * hud.y + surf.y * 0.5,"
++        // on a widened view the HUD is drawn narrower about the centre and movies are fitted (hud.xy, 1 otherwise),
++        // and a HUD piece may be moved towards its side (hud.z, 0 otherwise)
++        s += "    oPos = float4((rhw.x - surf.x * 0.5) * hud.x + surf.x * 0.5 + hud.z, (rhw.y - surf.y * 0.5) * hud.y + surf.y * 0.5,"
 +             " rhw.z / surf.z, w);\n";
      } else {
          s += "    float4 ip = float4(" + v(0, "float4(0,0,0,1)") + ".xyz, 1);\n";
          s += "    float4 cp = mul(ip, wvp);\n";
-@@ -927,6 +954,8 @@ std::string PixelHlsl(const PixelKey& k) {
+@@ -927,6 +955,8 @@ std::string PixelHlsl(const PixelKey& k) {
              if (t.shadow)
                  body += F("float4 t%d = shadow(tex%d, smp%d, ", i, i, i) + TexUv(t, i, F("tc%d.xy / tc%d.w", i, i)) +
                          F(", tc%d.z / tc%d.w, %d, i.pos.xy, texsize[%d].xy);\n", i, i, t.shadow, i);
@@ -1147,7 +1261,7 @@ index 9ff7b67..c293ac1 100644
                  body += F("float4 t%d = spreadtap(tex%d, smp%d, %s, spread[%d], %s);\n", i, i, i, uv.c_str(), i, Hooks().ReadScale(t).c_str());
              else if (t.kind == kTex2D) body += F("float4 t%d = tex%d.Sample(smp%d, %s);\n", i, i, i, uv.c_str());
 diff --git a/runtime/gpu/shaders.h b/runtime/gpu/shaders.h
-index 08d9bff..d14ae3f 100644
+index 08d9bff..e588599 100644
 --- a/runtime/gpu/shaders.h
 +++ b/runtime/gpu/shaders.h
 @@ -19,6 +19,7 @@ struct TexInfo {
@@ -1158,11 +1272,12 @@ index 08d9bff..d14ae3f 100644
  };
  
  struct PixelKey {
-@@ -105,6 +106,7 @@ struct DrawConstants {
+@@ -105,6 +106,8 @@ struct DrawConstants {
      float lt[8][7][4];   // per light: diffuse, specular, ambient, position range, direction falloff, attenuation, cos theta/2 phi/2
      float rtshift[4];    // per kTexTarget stage: host pixels its reads move along x and y, negative up and left
      float zparams[4];    // ReversedDepthHlsl: a w buffer's scale (0 for a z buffer), its far w, the polygon offset
-+    float hud[4];        // screen space draws: x and y scale about the target centre (HUD pieces, movies on a widened view)
++    float hud[4];        // screen space draws: x and y scale about the target centre (HUD pieces, movies on a widened
++                         // view), then z added to x (a HUD piece moved towards its side of the screen)
  };
  
  }  // namespace gpu

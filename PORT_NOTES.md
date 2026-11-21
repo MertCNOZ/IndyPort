@@ -478,6 +478,23 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   over Z:, so each language past English has its own folder: hdd/Z_EU_fr, _de, _es, _it. Checked: French menus and
   hints after a first start's install.
 
+## HUD position, the game on the command line (2026-11-22, issue #3)
+
+- Asked for on GitHub (#3, ultrawide 3440x1440): the HUD to the sides, and playing without the launcher
+  (EmulationStation on a TV).
+- HUD position (setting `hud_position`: 0 the 4:3 middle, 1 a 16:9 area, 2 the screen's edges; launcher Graphics,
+  with the 16:9 aspect). A HUD piece is already drawn narrower about the centre (DrawConstants hud.x); hud.z now
+  moves it sideways after that. Only pieces wholly in a top corner (outer 30% of the width, top 30% of the height,
+  from ScreenSpanX's x span and greatest y) move, all on a side by the same distance, so a gauge's parts stay
+  together. Wider rules broke things: by side of the centre the item wheel's side rings flew apart; by the outer
+  30% alone the tip box's "Tip:" left its box. Only while playing (GameInfo hud_spread: the player's input or the
+  first person camera read in the last 100 ms), so menus, the pause menu and the save book stay whole. Checked at
+  3440x1440: menus, pause menu, tip box and item wheel unchanged; the corner gauges need a fight to show and were
+  left for the user's test.
+- The game on the command line: `IndyET.exe "<iso or folder>"` (the first argument not starting with --) comes
+  before game_path. A copy of the other release, given or chosen, is handed to its exe (GameInfo handovers, by
+  the xbe's SHA-1) with the same options; checked: IndyET.exe on the Europe disc started IndyET_EU.exe on it.
+
 ## Launcher look, 1.1.0 (2026-11-14)
 
 - From a design the user made on launcher 1.0.0 (its source), with the port's changes since 1.0.0 (Europe release,

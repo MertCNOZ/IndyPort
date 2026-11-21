@@ -24,6 +24,19 @@ PC port by [MertCNOZ](https://github.com/MertCNOZ).
 
 Without a choice in IndyPort, the port also finds the game in an `assets` folder beside it.
 
+## Without the launcher
+
+IndyPort is only needed to choose the game and change settings; they are kept in `settings.toml` beside it, and
+the game reads them itself. After that, `IndyET.exe` (or `IndyET_EU.exe` for the Europe release) starts the game
+directly, and it can be given the game on its command line, as front ends such as EmulationStation or Playnite do:
+
+```
+IndyET.exe "D:\Games\Indiana Jones and the Emperor's Tomb.iso"
+```
+
+Either exe hands a disc of the other release to the right one, so `IndyET.exe` works for both. IndyPort itself can
+be used with a controller (LB / RB change pages, A chooses, Start plays).
+
 ## USA and Europe releases
 
 Both Xbox releases run: the USA disc and the Europe (PAL) disc, *Indiana Jones and the Emperor's Tomb (Europe)
@@ -40,7 +53,8 @@ Both Xbox releases run: the USA disc and the Europe (PAL) disc, *Indiana Jones a
 ### Display and performance
 - Fullscreen, borderless or windowed, at any resolution.
 - **Widescreen**: a wider view at your screen's shape (16:9, 21:9) with the menus and HUD kept in proportion, or
-  the original 4:3.
+  the original 4:3. On wide monitors the gauges in the HUD's top corners can move out to a 16:9 area or to the
+  screen's edges (Graphics, HUD position).
 - Render scale from 50% to 200% (supersampling above 100%).
 - Frame rate limit of 30, 60, 120, 144, 165, 240, your monitor's refresh rate or unlimited. The game keeps its speed at any
   frame rate.

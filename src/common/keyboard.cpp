@@ -212,6 +212,13 @@ void NoteGameplay() { g_gameplay_seen = NowMs(); }
 
 void NoteFirstPerson() { g_first_person_seen = NowMs(); }
 
+// the HUD may go to the sides: playing (the player's input or the first person camera read lately); the pause menu,
+// the save book and the other menus stay in the middle
+bool HudSpread() {
+    int64_t now = NowMs();
+    return now - g_gameplay_seen.load() < 100 || now - g_first_person_seen.load() < 100;
+}
+
 bool FirstPersonLately() { return NowMs() - g_first_person_seen.load() < 100; }
 
 bool TakeTextKey(uint8_t& dik) {

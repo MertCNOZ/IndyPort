@@ -382,6 +382,7 @@ struct Settings {
     int sharpen = 40;
     int draw_distance = 100;
     int aspect = 0;  // 0 widescreen (wider view), 1 4:3, 2 stretched
+    int hud_position = 0;  // widescreen HUD: 0 the 4:3 middle, 1 16:9, 2 the screen's edges
     bool full_width = true;
     int fov = 100;
     bool fxaa = false;
@@ -427,6 +428,7 @@ Settings LoadSettings() {
         s.sharpen = std::clamp(int(t["sharpen"].value_or(int64_t(40))), 0, 100);
         s.draw_distance = std::clamp(int(t["draw_distance"].value_or(int64_t(100))), 25, 1000);
         s.aspect = std::clamp(int(t["aspect"].value_or(int64_t(0))), 0, 2);
+        s.hud_position = std::clamp(int(t["hud_position"].value_or(int64_t(0))), 0, 2);
         s.full_width = t["full_width"].value_or(true);
         s.fov = std::clamp(int(t["fov"].value_or(int64_t(100))), 70, 120);
         s.fxaa = t["fxaa"].value_or(false);
@@ -494,6 +496,7 @@ void SaveSettings(const Settings& s) {
     t.insert_or_assign("sharpen", int64_t(s.sharpen));
     t.insert_or_assign("draw_distance", int64_t(s.draw_distance));
     t.insert_or_assign("aspect", int64_t(s.aspect));
+    t.insert_or_assign("hud_position", int64_t(s.hud_position));
     t.insert_or_assign("full_width", s.full_width);
     t.insert_or_assign("fov", int64_t(s.fov));
     t.insert_or_assign("fxaa", s.fxaa);
@@ -908,6 +911,11 @@ void PageGraphics(Ui& ui) {
         Check("##fullw", &s.full_width);
         Desc("Draws the game as wide as the screen, so 100% render scale is the screen's full resolution. Off draws it "
              "4:3 and widens it: a little softer, a little faster.");
+        Row("HUD position");
+        Combo("##hudpos", &s.hud_position, {"Middle (4:3)", "16:9", "Screen edges"});
+        Desc("Where the gauges in the HUD's top corners go while you play: in the 4:3 middle as on the Xbox, out to a "
+             "16:9 area (for 21:9 and wider monitors), or out to the screen's edges. The item wheel, tips, menus and "
+             "subtitles stay in the middle.");
     }
     Row("VSync");
     Check("##vsync", &s.vsync);
