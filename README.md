@@ -37,6 +37,11 @@ IndyET.exe "D:\Games\Indiana Jones and the Emperor's Tomb.iso"
 Either exe hands a disc of the other release to the right one, so `IndyET.exe` works for both. IndyPort itself can
 be used with a controller (LB / RB change pages, A chooses, Start plays).
 
+**In-game settings**: press **F1**, or **Back and Start together** on a controller, for a settings menu over the
+game: display mode, resolution, aspect ratio, HUD position, VSync, render scale, frame rate limit, draw distance,
+field of view, FXAA, sharpening, vibration and the mouse. The d-pad or the arrow keys move it, B or Esc closes it;
+changes apply at once and are saved for IndyPort too. Opened while playing, it pauses the game first.
+
 ## USA and Europe releases
 
 Both Xbox releases run: the USA disc and the Europe (PAL) disc, *Indiana Jones and the Emperor's Tomb (Europe)

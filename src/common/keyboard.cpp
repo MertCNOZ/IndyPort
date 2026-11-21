@@ -35,6 +35,12 @@
 
 namespace game {
 
+// mouse look and its settings (the in-game menu changes them too)
+bool g_mouse_look = true;
+uint32_t g_mouse_sens = 50;  // 1-100, 50 is 1x
+bool g_mouse_invert = false;
+bool MenuOpen();  // menu.cpp
+
 namespace {
 
 constexpr int kActions = 24;
@@ -58,9 +64,6 @@ constexpr Place kButtons[16] = {{0, 0},  {1, 0},  {2, 0},  {3, 0},  {4, 0},     
                                 {-1, 1}, {-1, 2}, {-1, 4}, {-1, 8}, {-1, 0x10}, {-1, 0x20}, {-1, 0x40}, {-1, 0x80}};
 
 Bindings g_keys = kDefaults;
-bool g_mouse_look = true;
-uint32_t g_mouse_sens = 50;  // 1-100, 50 is 1x
-bool g_mouse_invert = false;
 
 HWND g_hwnd = nullptr;
 std::atomic<int> g_dx{0}, g_dy{0};          // raw mouse movement not read yet
@@ -197,7 +200,7 @@ void TakeMouseCamera(float& yaw, float& pitch, bool& mouse_has_camera) {
     int dx = g_cam_dx.exchange(0), dy = g_cam_dy.exchange(0);
     yaw = pitch = 0;
     mouse_has_camera = false;
-    if (!g_mouse_look || !OurWindowFocused()) return;
+    if (!g_mouse_look || !OurWindowFocused() || MenuOpen()) return;  // the settings menu holds the mouse's turns
     if (dx || dy) g_mouse_moved = now;
     // radians a count: 0.0022 (about 0.13 degrees) at sensitivity 50
     float k = float(g_mouse_sens) / 50.0f * 0.0022f;

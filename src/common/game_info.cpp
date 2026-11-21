@@ -6,6 +6,7 @@
 
 #include <toml++/toml.hpp>
 
+#include "../../launcher/lang.h"
 #include "app/app.h"
 #include "core/input.h"
 #include "core/log.h"
@@ -36,9 +37,15 @@ void MouseWindow(void* hwnd);
 bool MouseMessage(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result);
 void MapPad(int port, input::Pad& pad);
 bool HudSpread();  // keyboard.cpp
+bool MenuPad(int port, input::Pad& pad);  // menu.cpp
+bool MenuMessage(uint32_t msg, uintptr_t wp);
+void MenuFonts(void* hwnd);
+void MenuDraw();
 
 // the settings file's extra keys: the gamepad mapping, and the modern button icons on unless the file says otherwise
 void Load(const void* table) {
+    // the launcher's language, for the in-game settings menu
+    SetLanguage((*static_cast<const toml::table*>(table))["language"].value_or(std::string("auto")));
     LoadPadMap(table);
     LoadKeys(table);
     if (!static_cast<const toml::table*>(table)->contains("texture_packs")) app::Get().texture_packs = "modern_buttons";
@@ -51,6 +58,10 @@ void Save(void* table) {
 
 // F9 turns the frame counter on and off for this run (the launcher's setting is what it starts with)
 bool Message(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result) {
+    if (MenuMessage(msg, wp)) {
+        *result = 0;
+        return true;
+    }
     if (msg == WM_KEYDOWN && wp == VK_F9 && !(lp & (1 << 30))) g_show_fps = !g_show_fps;
     return MouseMessage(hwnd, msg, wp, lp, result);
 }
@@ -69,8 +80,21 @@ void Pad(int port, input::Pad& pad) {
     if (port >= 0 && port < 4 && real[port].exchange(pad.connected) != pad.connected)
         LOGR("input: controller %s on port %d", pad.connected ? "connected" : "disconnected", port + 1);
     MapPad(port, pad);
-    KeyboardPad(port, pad);
     AutopilotPad(port, pad);
+    // the settings menu (Back and Start together) takes the controllers while open; the keyboard then too
+    if (!MenuPad(port, pad)) KeyboardPad(port, pad);
+}
+
+// the game window is up: raw mouse input, and the settings menu's fonts
+void Window(void* hwnd) {
+    MouseWindow(hwnd);
+    MenuFonts(hwnd);
+}
+
+// each frame's ImGui: the frame counter and the settings menu over it
+void Ui(double fps) {
+    FpsOverlay(fps);
+    MenuDraw();
 }
 }
 
@@ -99,9 +123,9 @@ const app::GameInfo app::kGame = {
     .save = game::Save,                   // writes more into it: pad_map, keys, mouse
     .init = game::Init,                   // after the settings load, before the window and boot
     .loaded = nullptr,                    // image in memory, before its entry point runs
-    .window = game::MouseWindow,          // the game window is up: raw mouse input
+    .window = game::Window,               // the game window is up: raw mouse input, the menu's fonts
     .message = game::Message,             // window messages first; true takes one
-    .ui = game::FpsOverlay,               // ImGui drawing each frame: the frame counter
+    .ui = game::Ui,                       // ImGui drawing each frame: the frame counter, the settings menu
     .pad = game::Pad,                     // changes a polled pad: keyboard and autopilot drive port 0
     .rumble = game::Rumble,                   // changes a rumble before it is set
 #ifdef INDY_EU

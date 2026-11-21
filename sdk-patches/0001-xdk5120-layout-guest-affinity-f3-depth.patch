@@ -287,7 +287,7 @@ index e36f7ac..9a07980 100644
  }
  
 diff --git a/runtime/app/settings.cpp b/runtime/app/settings.cpp
-index 075b3b7..f9e66a0 100644
+index 075b3b7..bf19791 100644
 --- a/runtime/app/settings.cpp
 +++ b/runtime/app/settings.cpp
 @@ -54,6 +54,18 @@ void Load() {
@@ -330,7 +330,25 @@ index 075b3b7..f9e66a0 100644
      for (const Option& o : kGame.options) {
          if (o.flag) t.insert(o.key, *o.flag);
          else t.insert(o.key, int64_t(*o.value));
-@@ -118,6 +142,7 @@ Mode Output() {
+@@ -86,9 +110,16 @@ toml::table Table() {
+ 
+ }  // namespace
+ 
++// into the file as it is: keys the runtime does not know (the launcher's own) stay
+ void Save() {
++    toml::table t;
++    try {
++        t = toml::parse_file(File().string());
++    } catch (...) {
++    }
++    for (auto&& [key, value] : Table()) t.insert_or_assign(key, value);
+     std::ofstream f(File());
+-    f << Table() << "\n";
++    f << t << "\n";
+ }
+ 
+ void LogSettings() {
+@@ -118,6 +149,7 @@ Mode Output() {
  }
  
  bool Widescreen() {
@@ -338,7 +356,7 @@ index 075b3b7..f9e66a0 100644
      // asked per frame and per HUD quad: the desktop mode lookup only runs when the resolution setting changes
      static std::atomic<uint64_t> key{~0ull};
      static std::atomic<bool> wide{true};
-@@ -130,6 +155,19 @@ bool Widescreen() {
+@@ -130,6 +162,19 @@ bool Widescreen() {
      return wide;
  }
  

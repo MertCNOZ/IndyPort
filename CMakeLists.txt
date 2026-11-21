@@ -28,6 +28,8 @@ include(${SDK}/cmake/XbeRecomp.cmake)
 
 file(GLOB XBE_HOST_SOURCES CONFIGURE_DEPENDS src/*/*.cpp)
 list(FILTER XBE_HOST_SOURCES EXCLUDE REGEX "/src/game(_eu)?/")
+# the launcher's texts and their translations, for the in-game settings menu (src/common/menu.cpp)
+list(APPEND XBE_HOST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/launcher/lang.cpp)
 
 # partitions as xbe_symbols wrote them into config/game.toml
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS config/game.toml)
