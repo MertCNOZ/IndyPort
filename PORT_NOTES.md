@@ -480,7 +480,7 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
 
 ## In-game settings menu (2026-11-22, issue #3)
 
-- src/common/menu.cpp: F1, or Back and Start together, opens a settings menu over the game (GameInfo::ui draws it
+- src/common/menu.cpp: F1, or L3 and R3 together, opens a settings menu over the game (GameInfo::ui draws it
   with ImGui's draw lists; its own navigation from the polled pads, so every controller SDL sees moves it, not only
   XInput ones as ImGui's backend would). Items are the launcher's (same texts, so the launcher's translations, its
   lang.cpp built into the game, its language from settings.toml): display mode and resolution (ApplyDisplay),
@@ -489,13 +489,14 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   runtime (ApplySettings remakes the targets for a new scale) or by the hooks.
 - Input: MenuPad runs after the pad mapping and the autopilot, before the keyboard. Open: every pad is cleared and
   the keyboard skipped; closed: a pad is kept from the game until neutral and the keyboard until Esc, Enter, the
-  arrows... are let go, so the B or Esc that closed it does not jump or unpause. Start or Back alone are held back
+  arrows... are let go, so the B or Esc that closed it does not jump or unpause. L3 or R3 alone are held back
   150 ms to see whether the other follows, then given (a tap let go in the wait is given late, 80 ms). Opened while
   playing (HudSpread), Start is pressed for 120 ms first: the game's pause menu, so it stands still behind. The
   mouse camera is held while open.
 - Saving: app::Save now writes into settings.toml as it is (it rewrote the file, dropping the launcher's own keys
   such as its language). Checked: a change and back gave the same file; F1, the d-pad, B, Back+Start, Start alone,
-  F1 while playing (paused), Esc closing (stayed paused).
+  F1 while playing (paused), Esc closing (stayed paused). The controller's combination was Back and Start at
+  first; the user chose L3 and R3 (it keeps Start and Back free of the 150 ms wait).
 
 ## HUD position, the game on the command line (2026-11-22, issue #3)
 

@@ -1,11 +1,12 @@
 // The in-game settings menu, for playing without IndyPort (a TV, a controller, a front end such as EmulationStation):
-// F1, or Back and Start together on a controller, opens it over the game; the arrow keys or the d-pad / left stick
-// choose and change, B or Esc (or F1, or Back and Start again) close it. Everything applies at once and is saved to
+// F1, or L3 and R3 (both sticks pressed in) together on a controller, opens it over the game; the arrow keys or the
+// d-pad / left stick choose and change, B or Esc (or F1, or L3 and R3 again) close it. Everything applies at once and
+// is saved to
 // settings.toml when it closes, into the file as it is, so IndyPort shows the same settings.
 //
 // Opened while playing, it first opens the game's pause menu (a Start press), so nothing happens to Indy behind it.
 // While it is open the game gets no input; after it closes, a button or key still held is kept from the game until
-// it is let go (B or Esc would jump or pause again). Start and Back alone reach the game a moment late (150 ms), the
+// it is let go (B or Esc would jump or pause again). L3 and R3 alone reach the game a moment late (150 ms), the
 // time to see whether the other one follows.
 //
 // Drawn with ImGui's draw lists on the render thread (the runtime's GameInfo::ui); its own navigation, not ImGui's,
@@ -52,7 +53,8 @@ int64_t NowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
 }
 
-constexpr uint16_t kUp = 0x1, kDown = 0x2, kLeft = 0x4, kRight = 0x8, kStart = 0x10, kBack = 0x20;
+constexpr uint16_t kUp = 0x1, kDown = 0x2, kLeft = 0x4, kRight = 0x8, kStart = 0x10;
+constexpr uint16_t kCombo = 0x40 | 0x80;  // L3 and R3: the sticks pressed in, together
 
 // colours as the launcher's
 constexpr ImU32 kPanel = IM_COL32(20, 17, 15, 245), kLine = IM_COL32(64, 54, 46, 255), kText = IM_COL32(236, 230, 222, 255),
@@ -91,7 +93,7 @@ std::atomic<bool> g_key_gate{false};  // after closing: keys kept from the game 
 struct PortState {
     uint16_t prev = 0;             // directions and buttons last poll, for edges
     int64_t repeat_at = 0;         // the next repeat of a held direction
-    uint16_t pending = 0;          // Start or Back held back, waiting for the other
+    uint16_t pending = 0;          // L3 or R3 held back, waiting for the other
     int64_t pending_since = 0;
     bool latched = false;          // let through after the wait, until let go
     uint16_t inject = 0;           // a tap let go during the wait, given late
@@ -390,7 +392,7 @@ bool MenuMessage(uint32_t msg, uintptr_t wp) {
     return false;
 }
 
-// each polled pad (after the gamepad mapping and the autopilot, before the keyboard): Back and Start together open
+// each polled pad (after the gamepad mapping and the autopilot, before the keyboard): L3 and R3 together open
 // the menu; while it is open its navigation, and nothing reaches the game; true: the keyboard is kept out too
 bool MenuPad(int port, input::Pad& pad) {
     if (port < 0 || port > 3) return false;
@@ -419,14 +421,14 @@ bool MenuPad(int port, input::Pad& pad) {
     }
 
     if (g_open) {
-        // the controller moves the menu: directions repeat while held, A changes, B (or Back and Start) closes
+        // the controller moves the menu: directions repeat while held, A changes, B (or L3 and R3) closes
         uint16_t dirs = pad.buttons & (kUp | kDown | kLeft | kRight);
         if (pad.ly > 16000) dirs |= kUp;
         if (pad.ly < -16000) dirs |= kDown;
         if (pad.lx < -16000) dirs |= kLeft;
         if (pad.lx > 16000) dirs |= kRight;
         uint16_t now_held = dirs | (pad.analog[0] > 128 ? 0x100 : 0) | (pad.analog[1] > 128 ? 0x200 : 0) |
-                            (pad.buttons & (kStart | kBack));
+                            (pad.buttons & kCombo);
         uint16_t pressed = now_held & ~p.prev;
         bool repeat = dirs && (dirs & p.prev) == dirs && now >= p.repeat_at;
         if (pressed & dirs) p.repeat_at = now + 380;
@@ -438,7 +440,7 @@ bool MenuPad(int port, input::Pad& pad) {
             if (act & kLeft) Change(-1);
             if (act & kRight) Change(1);
             if (pressed & 0x100) Change(0);
-            if ((pressed & 0x200) || ((now_held & (kStart | kBack)) == (kStart | kBack) && (pressed & (kStart | kBack))))
+            if ((pressed & 0x200) || ((now_held & kCombo) == kCombo && (pressed & kCombo)))
                 Close();
         }
         p.prev = now_held;
@@ -461,9 +463,9 @@ bool MenuPad(int port, input::Pad& pad) {
         }
     }
 
-    // Back and Start together open it; either alone reaches the game after a short wait
-    uint16_t sb = pad.buttons & (kStart | kBack);
-    if (sb == (kStart | kBack)) {
+    // L3 and R3 together open it; either alone reaches the game after a short wait
+    uint16_t sb = pad.buttons & kCombo;
+    if (sb == kCombo) {
         p.pending = 0;
         p.latched = false;
         Open();
@@ -480,12 +482,12 @@ bool MenuPad(int port, input::Pad& pad) {
             p.pending = 0;
             p.latched = true;
         } else {
-            pad.buttons &= uint16_t(~(kStart | kBack));
+            pad.buttons &= uint16_t(~kCombo);
         }
     } else if (sb && !p.latched) {
         p.pending = sb;
         p.pending_since = now;
-        pad.buttons &= uint16_t(~(kStart | kBack));
+        pad.buttons &= uint16_t(~kCombo);
     }
     if (!sb) p.latched = false;
     if (p.inject && now < p.inject_until) pad.buttons |= p.inject;

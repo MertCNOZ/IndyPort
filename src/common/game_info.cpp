@@ -81,7 +81,7 @@ void Pad(int port, input::Pad& pad) {
         LOGR("input: controller %s on port %d", pad.connected ? "connected" : "disconnected", port + 1);
     MapPad(port, pad);
     AutopilotPad(port, pad);
-    // the settings menu (Back and Start together) takes the controllers while open; the keyboard then too
+    // the settings menu (L3 and R3 together) takes the controllers while open; the keyboard then too
     if (!MenuPad(port, pad)) KeyboardPad(port, pad);
 }
 
