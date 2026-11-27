@@ -497,6 +497,9 @@ draft can become `sdk/xdk/5120/layout.toml`; DSOUND and XPP match 4831.
   such as its language). Checked: a change and back gave the same file; F1, the d-pad, B, Back+Start, Start alone,
   F1 while playing (paused), Esc closing (stayed paused). The controller's combination was Back and Start at
   first; the user chose L3 and R3 (it keeps Start and Back free of the 150 ms wait).
+- Quit game (issue #4: the Xbox game has no way out but Alt+F4): the menu's last item, an Action. A or Enter arms
+  it, a second press closes the menu (saving) and posts WM_CLOSE to the window, the same path as Alt+F4; moving
+  off it or reopening the menu disarms it.
 
 ## HUD position, the game on the command line (2026-11-22, issue #3)
 

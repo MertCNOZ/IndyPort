@@ -40,7 +40,8 @@ be used with a controller (LB / RB change pages, A chooses, Start plays).
 **In-game settings**: press **F1**, or **L3 and R3 together** (both sticks pressed in) on a controller, for a settings menu over the
 game: display mode, resolution, aspect ratio, HUD position, VSync, render scale, frame rate limit, draw distance,
 field of view, FXAA, sharpening, vibration and the mouse. The d-pad or the arrow keys move it, B or Esc closes it;
-changes apply at once and are saved for IndyPort too. Opened while playing, it pauses the game first.
+changes apply at once and are saved for IndyPort too. Opened while playing, it pauses the game first. Its last item,
+**Quit game**, closes the game (press A or Enter twice).
 
 ## USA and Europe releases
 

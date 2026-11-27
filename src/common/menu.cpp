@@ -1,8 +1,8 @@
 // The in-game settings menu, for playing without IndyPort (a TV, a controller, a front end such as EmulationStation):
 // F1, or L3 and R3 (both sticks pressed in) together on a controller, opens it over the game; the arrow keys or the
 // d-pad / left stick choose and change, B or Esc (or F1, or L3 and R3 again) close it. Everything applies at once and
-// is saved to
-// settings.toml when it closes, into the file as it is, so IndyPort shows the same settings.
+// is saved to settings.toml when it closes, into the file as it is, so IndyPort shows the same settings. Its last
+// item quits the game (the Xbox game has no way out): A or Enter, then again to be sure.
 //
 // Opened while playing, it first opens the game's pause menu (a Start press), so nothing happens to Indy behind it.
 // While it is open the game gets no input; after it closes, a button or key still held is kept from the game until
@@ -71,7 +71,7 @@ struct Item {
     const char* label = nullptr;  // null: a heading (heading)
     const char* heading = nullptr;
     const char* desc = nullptr;
-    enum Kind { Choice, Toggle, Slider } kind = Choice;
+    enum Kind { Choice, Toggle, Slider, Action } kind = Choice;
     std::vector<int> values;          // Choice: the values, names beside them
     std::vector<std::string> names;
     int lo = 0, hi = 0, step = 1;     // Slider
@@ -79,12 +79,14 @@ struct Item {
     std::function<int()> get;
     std::function<void(int)> set;
     bool display = false;             // a change applies the display mode
+    std::function<void()> act;        // Action: done on a second A / Enter
 };
 
 std::mutex g_lock;
 std::vector<Item> g_items;
 int g_sel = 1;
 bool g_open = false, g_dirty = false;
+bool g_armed = false;          // an Action asked once: the next A / Enter does it
 int64_t g_pause_until = 0;     // a Start press for the game's pause menu, while this opens
 std::atomic<bool> g_open_flag{false};
 std::deque<int> g_keys;        // keyboard navigation from the window thread: VK codes
@@ -266,10 +268,26 @@ void Build() {
     v.push_back(SliderItem("Mouse sensitivity", nullptr, 1, 100, 1, "", [] { return int(g_mouse_sens); },
                            [](int x) { g_mouse_sens = uint32_t(x); }));
     v.push_back(Toggle("Invert vertical", nullptr, [] { return g_mouse_invert; }, [](bool x) { g_mouse_invert = x; }));
+
+    v.push_back(Heading("GAME"));
+    {
+        Item i;
+        i.label = "Quit game";
+        i.desc = "Closes the game, as Alt+F4 does; the settings are saved first. Progress since the last save in the "
+                 "game is lost. Press A or Enter, then again to be sure.";
+        i.kind = Item::Action;
+        i.get = [] { return 0; };
+        i.set = [](int) {};
+        i.act = [] { PostMessageW(static_cast<HWND>(app::Window()), WM_CLOSE, 0, 0); };
+        v.push_back(std::move(i));
+    }
     g_items = std::move(v);
 }
 
+void Close();
+
 void Step(int dir) {
+    g_armed = false;
     int n = int(g_items.size());
     for (int k = 0; k < n; k++) {
         g_sel = (g_sel + dir + n) % n;
@@ -281,6 +299,18 @@ void Step(int dir) {
 void Change(int dir) {
     Item& i = g_items[size_t(g_sel)];
     if (!i.label) return;
+    if (i.kind == Item::Action) {
+        if (dir != 0) return;
+        if (!g_armed) {
+            g_armed = true;
+            return;
+        }
+        g_armed = false;
+        LOGR("menu: %s", i.label);
+        Close();
+        i.act();
+        return;
+    }
     int v = i.get(), nv = v;
     if (i.kind == Item::Toggle) {
         nv = v ? 0 : 1;
@@ -307,6 +337,7 @@ void Open() {
     g_open = true;
     g_open_flag = true;
     g_dirty = false;
+    g_armed = false;
     g_keys.clear();
     // playing: the game's pause menu first, so the game stands still behind this
     g_pause_until = HudSpread() ? NowMs() + 120 : 0;
@@ -561,6 +592,10 @@ void MenuDraw() {
                 d->AddLine(ImVec2(bx + b * 0.43f, by + b * 0.7f), ImVec2(bx + b * 0.76f, by + b * 0.3f), kText, 2.2f * u);
             }
             d->AddText(font, fs, ImVec2(bx + b + 14 * u, ty), kDim, T(v ? "On" : "Off"));
+        } else if (i.kind == Item::Action) {
+            bool armed = sel && g_armed;
+            d->AddText(font, fs, ImVec2(vx, ty), armed ? kAccent : (sel ? kText : kDim),
+                       T(armed ? "Press A or Enter again to quit" : "Press A or Enter"));
         } else if (i.kind == Item::Choice) {
             std::string name;
             for (size_t k = 0; k < i.values.size(); k++)
