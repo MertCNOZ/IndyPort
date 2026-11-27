@@ -52,7 +52,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr const char* kVersion = "1.2.0";
+constexpr const char* kVersion = "1.2.1";
 // the game's exe for each release of the disc: USA, and Europe (PAL), whose code is linked at other addresses
 constexpr const wchar_t* kGameExe = L"IndyET.exe";
 constexpr const wchar_t* kGameExeEurope = L"IndyET_EU.exe";
